@@ -232,7 +232,17 @@ HUB_LINK_PIDS = ('for p in /proc/[0-9]*; do c=$(tr "\\0" " " < $p/cmdline 2>/dev
 
 
 def mac_interface(ip):
-    """The interface macOS sends `ip` out of ("utun7", "en0"), or None when this is not a Mac or it cannot tell."""
+    """The interface this computer sends `ip` out of ("utun7", "en0"; "if12" on Windows), or None if it cannot tell."""
+    if sys.platform == "win32":
+        # GetBestInterface takes the IPv4 address in network byte order and returns the interface index.
+        import ctypes
+        index = ctypes.c_ulong()
+        addr = int.from_bytes(ipaddress.IPv4Address(ip).packed, "little")
+        try:
+            rc = ctypes.windll.iphlpapi.GetBestInterface(ctypes.c_ulong(addr), ctypes.byref(index))
+        except (OSError, AttributeError):
+            return None
+        return f"if{index.value}" if rc == 0 else None
     if sys.platform != "darwin":
         return None
     try:

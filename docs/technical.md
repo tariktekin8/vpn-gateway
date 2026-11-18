@@ -325,8 +325,8 @@ the server; the containers keep running.
 
 ![Gateway details on top, the VPN list on the left, a connected VPN and its addresses on the right](images/web.png)
 
-- **Addresses** lists every address of the VPN and whether local (`route -n get`, when the page runs on that
-  Mac), the gateway (`ip route` in the gateway container) and the VPN container (`/state/<name>.routes`) use it.
+- **Addresses** lists every address of the VPN and whether local (`route -n get` on a Mac, the best route on
+  Windows), the gateway (`ip route` in the gateway container) and the VPN container (`/state/<name>.routes`) use it.
   Adding or removing an address there, or changing subnets in **Settings**, saves `systems.json` and gives a
   connected VPN its new list at once: the page starts the container's `hub-link.sh` again with the new
   `VPN_SUBNETS` and stops the old one, so the VPN session stays up. The automatic tunnel applies the new profile
