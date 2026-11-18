@@ -247,14 +247,16 @@ def write_static_routes(data):
     nets = sorted({n for s in data["systems"] for n in configured_subnets(s)})
     path = WG_PROFILE.with_name("static-routes")
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("".join(n + "\n" for n in nets))
+    tmp.write_bytes("".join(n + "\n" for n in nets).encode("utf-8"))  # LF, read by the Linux gateway
     tmp.replace(path)
 
 
 def write_private(path, text):
     path.touch(mode=0o600, exist_ok=True)
     path.chmod(0o600)
-    path.write_text(text)
+    # Bytes, not write_text: on Windows that writes CRLF and the locale codepage, so a container would
+    # read "password\r" and the VPN rejects it.
+    path.write_bytes(text.encode("utf-8"))
 
 
 def parse_callback(url):
