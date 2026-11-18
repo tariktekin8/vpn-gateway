@@ -1,0 +1,13 @@
+{
+  "systems": [
+    {
+      "name": "connection-1",
+      "method": "gp-password",
+      "host": "vpn1.example.com",
+      "user": "your-username",
+      "subnets": [
+        "10.10.0.0/16"
+      ]
+    }
+  ]
+}

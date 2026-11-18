@@ -1,0 +1,100 @@
+#!/bin/bash
+# tunnel-service: keeps the "vpn-gateway" WireGuard tunnel up on macOS with wg-quick, and applies the profile again when the
+# gateway rewrites it. It also keeps /etc/resolver/<domain> files in step with the DNS of the connected VPNs.
+# Runs as root from launchd (installed by handlers/macos/install-tunnel.sh).
+# Usage: tunnel-service <path to data/wireguard/mac.conf>
+#
+# The profile lives in a folder the user can write, and wg-quick runs PreUp/PostUp lines as root. So the profile
+# is never used as is: only the known keys with plain values are copied, and the endpoint must be 127.0.0.1.
+set -u
+src="${1:?usage: tunnel-service <path to mac.conf>}"
+conf_dir=/etc/wireguard
+conf="$conf_dir/vpn-gateway.conf"  # the interface name comes from the file name: vpn-gateway
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin  # wg-quick needs a bash 4+ first
+
+clean_profile() {
+  awk '
+    /^\[(Interface|Peer)\]$/ { print; next }
+    /^(PrivateKey|PublicKey) = [A-Za-z0-9+\/]{43}=$/ { print; next }
+    /^Address = [0-9.]+\/[0-9]+$/ { print; next }
+    /^Endpoint = 127\.0\.0\.1:[0-9]+$/ { print; next }
+    /^AllowedIPs = [0-9.\/, ]+$/ { print; next }
+    /^PersistentKeepalive = [0-9]+$/ { print; next }
+  ' "$1"
+}
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+MARK="# managed by vpn-gateway"
+OLD_MARK="# managed by vpnhub"  # files written before the project was renamed; replaced or removed like our own
+ours() { local first; first=$(head -n 1 "$1" 2>/dev/null); [ "$first" = "$MARK" ] || [ "$first" = "$OLD_MARK" ]; }
+RESOLVER_DIR="${SAML_RESOLVER_DIR:-/etc/resolver}"  # the override exists for testing only
+
+# Write $RESOLVER_DIR/<domain> for each "domain server..." line of the gateway's dns file, and delete the files of
+# domains that are gone. Only files that start with $MARK are touched: a file you wrote yourself is never changed.
+# The dns file sits in a folder the user can write, so every domain and address is checked before use.
+apply_dns() {
+  local file="$1" keep=" " domain servers body s target f
+  mkdir -p "$RESOLVER_DIR"
+  if [ -f "$file" ]; then
+    while read -r domain servers; do
+      domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')
+      # At least one dot (never a whole top-level domain), only letters, digits, "-" and dots.
+      printf '%s' "$domain" | grep -Eq '^[a-z0-9-]+(\.[a-z0-9-]+)+$' || continue
+      [ "${#domain}" -le 253 ] || continue
+      body="$MARK"
+      for s in $servers; do
+        printf '%s' "$s" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' && body="$body"$'\n'"nameserver $s"
+      done
+      [ "$body" != "$MARK" ] || continue
+      target="$RESOLVER_DIR/$domain"
+      if [ -e "$target" ] && ! ours "$target"; then continue; fi
+      if [ "$(cat "$target" 2>/dev/null)" != "$body" ]; then
+        printf '%s\n' "$body" > "$target.tmp" && chmod 644 "$target.tmp" && mv "$target.tmp" "$target"
+        log "DNS: $domain -> ${servers}"
+      fi
+      keep="$keep$domain "
+    done < "$file"
+  fi
+  for f in "$RESOLVER_DIR"/*; do
+    [ -f "$f" ] && ours "$f" || continue
+    case "$keep" in *" $(basename "$f") "*) ;; *) rm -f "$f"; log "DNS: removed $(basename "$f")" ;; esac
+  done
+}
+
+# On macOS the interface is utunN; wg-quick keeps the mapping from "vpn-gateway" in this file.
+# Alive means the interface exists and the gateway address still goes through it: another WireGuard client with
+# the same profile (the WireGuard app) can take or delete that route.
+tunnel_alive() {
+  local name_file=/var/run/wireguard/vpn-gateway.name iface
+  [ -s "$name_file" ] || return 1
+  iface=$(cat "$name_file")
+  wg show "$iface" >/dev/null 2>&1 && route -n get 10.200.0.1 2>/dev/null | grep -q "interface: $iface$"
+}
+
+[ "${1:-}" = "--apply-dns" ] && { apply_dns "$2"; exit 0; }  # one run, for testing
+
+umask 077
+mkdir -p "$conf_dir"
+applied=""
+while :; do
+  profile=""
+  [ -f "$src" ] && profile=$(clean_profile "$src")
+  if [ -n "$profile" ]; then
+    # Bring it up again when the profile changed or the interface is gone (sleep, network change, wg-quick down).
+    if [ "$profile" != "$applied" ] || ! tunnel_alive; then
+      printf '%s\n' "$profile" > "$conf.tmp" && mv "$conf.tmp" "$conf"
+      wg-quick down "$conf" >/dev/null 2>&1
+      if wg-quick up "$conf" >/dev/null 2>&1; then
+        applied=$profile
+        log "tunnel up: $(grep '^AllowedIPs' "$conf")"
+      else
+        applied=""
+        log "wg-quick up failed; trying again in 30 s"
+        sleep 25
+      fi
+    fi
+  fi
+  apply_dns "$(dirname "$src")/dns"
+  sleep 5
+done

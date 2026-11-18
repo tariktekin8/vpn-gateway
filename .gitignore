@@ -1,0 +1,26 @@
+# Local config and secrets: passwords, SAML cookies, WireGuard private keys. Never commit these.
+data/
+# Older layout (before data/): kept so an un-migrated checkout cannot commit its secrets.
+systems.json
+docker-compose.generated.json
+.secrets/
+wireguard/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS and editors
+.DS_Store
+.claude/
+.vscode/
+.idea/
+
+# Left behind if a save is killed midway; holds the full systems.json
+.systems.*.tmp
+
+# Node, only for building the web UI
+node_modules/
+
+# Tests: local only, not published
+tests/

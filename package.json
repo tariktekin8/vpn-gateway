@@ -1,0 +1,12 @@
+{
+  "name": "vpn-gateway-web",
+  "private": true,
+  "description": "Build tooling for the VPN Gateway web UI only. Running VPN Gateway does not need Node.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

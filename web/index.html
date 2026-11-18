@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="page-token" content="__PAGE_TOKEN__">
+  <title>VPN Gateway</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <h1 class="brand"><img src="logo.svg" alt="" width="28" height="28">VPN Gateway</h1>
+      <span class="grow"></span>
+      <button type="button" id="theme" class="btn btn-quiet btn-icon" aria-label="Theme: System"></button>
+      <div class="menu">
+        <button type="button" id="advanced" class="btn btn-quiet" aria-haspopup="menu" aria-expanded="false"
+          aria-controls="advanced-menu">Advanced</button>
+        <div id="advanced-menu" class="menu-list" role="menu" hidden>
+          <button type="button" role="menuitem" id="menu-gateway">Gateway and WireGuard</button>
+          <button type="button" role="menuitem" id="menu-profile">Download WireGuard profile</button>
+          <button type="button" role="menuitem" id="menu-stop-all" class="danger">Stop all connections</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div id="banners">
+      <div id="banner-token" class="banner bad" role="alert" hidden>
+        <span>The server restarted. Reload this page.</span>
+        <button type="button" id="reload" class="btn">Reload</button>
+      </div>
+      <div id="banner-net" class="banner bad" role="alert" hidden>
+        <span>Cannot reach the VPN Gateway server. Is <code>./vpn web</code> still running?</span>
+      </div>
+      <div id="banner-file" class="banner bad" role="alert" hidden>
+        <span><strong>data/systems.json has a problem.</strong> Fix the file by hand; saving is refused until then.
+          <code id="banner-file-text" class="block"></code></span>
+      </div>
+      <div id="banner-load" class="banner warn" role="alert" hidden>
+        <span id="banner-load-text"></span>
+      </div>
+      <div id="global-msg" class="msg" aria-live="polite" hidden></div>
+    </div>
+
+    <ul id="attention" class="attention" aria-label="Needs your attention" hidden></ul>
+
+    <section class="gwbar" aria-label="Gateway">
+      <details id="gw-bar">
+        <summary id="gw-summary"></summary>
+        <div id="gw-body" class="gwbar-body"></div>
+      </details>
+    </section>
+
+    <div class="panes">
+      <nav class="rail" aria-label="VPNs">
+        <h2 class="rail-title">VPNs</h2>
+        <p id="list-loading" class="rail-note">Loading…</p>
+        <ul id="vpn-list" class="vpn-list"></ul>
+        <button type="button" id="add-vpn" class="add-vpn">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+          Add VPN
+        </button>
+      </nav>
+      <main id="detail" class="detail" aria-live="polite"></main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""VPN Gateway launcher. The code is in src/: cli.py for the commands, server.py for the web page.
+
+  ./vpn up | login <name> | status | down | check   (see ./vpn --help)
+  ./vpn web [--port N]                              start the web page on 127.0.0.1 (default port 8765)
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["web"]:
+        import server  # noqa: E402
+        sys.exit(server.main(sys.argv[2:]))
+    import cli  # noqa: E402
+    sys.exit(cli.main(sys.argv[1:]))

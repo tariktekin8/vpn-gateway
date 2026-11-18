@@ -1,0 +1,5 @@
+# Scripts run inside Linux containers or on macOS: keep LF even on a Windows checkout.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
