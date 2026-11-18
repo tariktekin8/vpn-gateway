@@ -11,7 +11,6 @@ import http.client
 import importlib.util
 import ipaddress
 import json
-import mimetypes
 import os
 import re
 import secrets
@@ -48,6 +47,9 @@ RM_TIMEOUT = 120  # stopping one container before a delete
 LONG_TIMEOUT = 1800  # compose up --build can take minutes
 TOKEN_HEADER = "x-gateway-token"
 HANDLER_TOKEN_HEADER = "x-gateway-handler-token"
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
+                ".json": "application/json; charset=utf-8"}
 HANDLER_FILE = "web-handler.json"  # in data/secrets/: port and handler token for the macOS callback handler
 TOKEN_PLACEHOLDER = b"__PAGE_TOKEN__"
 # Present when handlers/macos/install-tunnel.sh runs the tunnel with wg-quick: profile changes then apply by themselves.
@@ -1010,9 +1012,9 @@ class App:
             return not_found_static()
         if name == "index.html":
             data = data.replace(TOKEN_PLACEHOLDER, self.token.encode("ascii"))
-        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
-            ctype += "; charset=utf-8"
+        # Fixed types: on Windows, mimetypes reads the registry, which often maps .js to text/plain;
+        # with nosniff the browser then refuses app.js and the page stays on "Loading…".
+        ctype = STATIC_TYPES.get(Path(name).suffix.lower(), "application/octet-stream")
         return 200, COMMON_HEADERS + [("Content-Type", ctype)], data
 
 
