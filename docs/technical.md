@@ -228,12 +228,14 @@ Mac you can make this automatic: see [Automatic tunnel (Mac)](#automatic-tunnel-
 ## Reaching servers by name
 
 Every address you list in a VPN's **Subnets** works by its number, for example `10.20.0.15`. To use names such as
-`server.corp1.example.com`, the VPN's **DNS server** must be in its Subnets too. The VPN's **Names** tab shows its
-domains and DNS servers, and adds a server to the Subnets with one click.
+`server.corp1.example.com`, the VPN's **DNS server** must be in its Subnets too, and you must allow the domain. The
+VPN's **Names** tab shows the domains and DNS servers the VPN sent: press **Use** next to a domain to allow it, and
+**Add to Addresses** next to a DNS server. Allow only the organization's own domains. A VPN cannot make your
+computer look up any other name through it, for example a public website's or another organization's.
 
-**Mac with the [automatic tunnel](#automatic-tunnel-mac):** names work by themselves. VPN Gateway learns each
-VPN's DNS when it connects and writes `/etc/resolver/<domain>` within 5 seconds; it deletes the file when the VPN
-disconnects. It only touches files whose first line is `# managed by vpn-gateway`, so a file you wrote yourself
+**Mac with the [automatic tunnel](#automatic-tunnel-mac):** after you allow a domain, names work by themselves.
+When the VPN connects, VPN Gateway writes `/etc/resolver/<domain>` for each allowed domain within 5 seconds, with
+the DNS servers the VPN sent that are inside its own Subnets; it deletes the file when the VPN disconnects. It only touches files whose first line is `# managed by vpn-gateway`, so a file you wrote yourself
 stays as it is: delete your own file if you want VPN Gateway to take over that domain. Every domain and address is
 checked first: the domain needs at least one dot (never a whole top-level domain) and only letters, digits, `-` and
 dots; the servers must be IPv4 addresses.
@@ -401,6 +403,7 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 | `host`     | all                        | VPN address, as you would type it in the official client. Add `:port` if it is not 443. |
 | `user`     | `gp-password`              | Your VPN user name. |
 | `subnets`  | optional                   | What your computer sends into this VPN. See below. |
+| `domains`  | optional                   | DNS domains looked up through this VPN, for example `["corp1.example.com"]` (lower case). The **Use** button in the Names tab adds them. A domain belongs to one VPN only, subdomains included. |
 | `idle_minutes` | optional               | Disconnect after this many minutes (1 to 1440) without traffic from your computer into the tunnel. Traffic from the VPN side does not count. Not set: stay connected. |
 
 **About `subnets`:**
@@ -629,8 +632,9 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
    routes each network to the VPN it belongs to in `systems.json` (`data/wireguard/route-owners`), and rewrites `data/wireguard/mac.conf`. Its `AllowedIPs` hold the `subnets` from `systems.json` (VPN Gateway
    writes them to `data/wireguard/static-routes`) and nothing else. The same list is the gateway's firewall
    allow-list; a listed range without a connected VPN gets an `unreachable` route, so it never leaks out through
-   Docker's network. It collects the DNS of all VPNs into `data/wireguard/dns` ("domain server…" lines), keeping
-   only servers inside `subnets`.
+   Docker's network. It writes `data/wireguard/dns` ("domain server…" lines): for each connected VPN, the domains
+   allowed for it (`data/wireguard/dns-owners`, from `domains`) with the DNS servers it sent that are inside its own
+   `subnets`.
 4. On your computer, WireGuard sends only those networks into the tunnel. Everything else uses your normal
    connection.
 
@@ -655,12 +659,15 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
     ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
     ├── secrets/               sign-in helper token while vpn web runs; SAML login page from ./vpn login
-    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, port-limits, dns
+    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, port-limits, dns-owners, dns
 ```
 
 ## Troubleshooting
 
 **`./vpn status` says "no routes to Mac".** The VPN is not logged in yet. Run `./vpn login <name>`.
+
+**After updating VPN Gateway, names stopped working.** Domains are now used only after you allow them. Open the
+VPN's **Names** tab and press **Use** next to each of the organization's domains.
 
 **After updating VPN Gateway, a VPN that was connected reaches nothing.** Containers started by an older version
 use the old shared network and volume. Disconnect and connect each VPN once. The old volume `vpn-gateway_state`
@@ -701,8 +708,9 @@ advice below); unknown bugs in Docker, WireGuard, openconnect or openfortivpn; b
 which is your responsibility (see [Before you start](#before-you-start)).
 
 **DNS:** VPN Gateway never changes your computer's default DNS, so public names never go to an organization's DNS
-server. On a Mac with the automatic tunnel, only the domains a connected VPN pushed go to that VPN's DNS servers.
-When the VPN is off, those names go to your normal DNS again.
+server. On a Mac with the automatic tunnel, only the domains you allowed for a VPN (`domains`) go to that VPN's DNS
+servers, and only to servers inside its own subnets. Domains a VPN sends are suggestions until you allow them. When
+the VPN is off, those names go to your normal DNS again.
 
 - VPN Gateway listens on `127.0.0.1` only: the WireGuard port, the FortiGate SAML port and the web page.
 - Passwords and SAML cookies are never stored. The page (or `./vpn login`) asks for the password at every connect.

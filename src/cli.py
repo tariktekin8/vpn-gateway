@@ -58,6 +58,8 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 
 
 MAX_IDLE_MINUTES = 1440
+# A DNS domain: labels of letters, digits and "-", at least two labels. Lower case, as systems.json stores it.
+DOMAIN_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
 
 
 def validate(data):
@@ -65,7 +67,7 @@ def validate(data):
     systems = data.get("systems") if isinstance(data, dict) else None
     if not isinstance(systems, list):  # an empty list is fine: then only the gateway runs
         return ["'systems' must be a list"]
-    errors, names, nets = [], set(), []
+    errors, names, nets, domains = [], set(), [], []
     for i, s in enumerate(systems):
         where = f"systems[{i}]"
         if not isinstance(s, dict):
@@ -97,6 +99,11 @@ def validate(data):
             # A leading "-" would become a VPN client option; "$" is expanded by compose; spaces split arguments.
             if isinstance(value, str) and (value.startswith("-") or re.search(r"[\s$]", value)):
                 errors.append(f"{where}: '{field}' must not start with '-' or contain spaces or '$'")
+        listed = s.get("domains", [])
+        if not isinstance(listed, list) or not all(isinstance(d, str) and DOMAIN_RE.match(d) for d in listed):
+            errors.append(f"{where}: 'domains' must be a list of lower-case domain names such as corp.example.com")
+        else:
+            domains += [(d, name) for d in listed]
         idle = s.get("idle_minutes")
         if idle is not None and (type(idle) is not int or not 1 <= idle <= MAX_IDLE_MINUTES):
             errors.append(f"{where}: 'idle_minutes' must be a whole number from 1 to {MAX_IDLE_MINUTES}")
@@ -116,6 +123,10 @@ def validate(data):
             if shown.version == 4 and shown.subnet_of(WG_NET):
                 errors.append(f"{where}: {shown} is inside the WireGuard network {WG_NET}; pick another range")
             nets.append((shown, name))
+    for i, (a, a_name) in enumerate(domains):
+        for b, b_name in domains[i + 1:]:
+            if a == b or a.endswith("." + b) or b.endswith("." + a):
+                errors.append(f"domains overlap: {a} ({a_name}) and {b} ({b_name}); give each domain to one VPN")
     for i, (a, a_name) in enumerate(nets):
         for b, b_name in nets[i + 1:]:
             if a.version == b.version and a.overlaps(b):
@@ -326,6 +337,12 @@ def write_static_routes(data):
     # "subnet name": the gateway routes a subnet only to the VPN it belongs to, whatever another VPN publishes.
     owners = sorted(f"{n} {s['name']}" for s in data["systems"] for n in configured_subnets(s))
     path = WG_PROFILE.with_name("route-owners")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
+    tmp.replace(path)
+    # "domain name": the only domains the computer resolves through that VPN's DNS (docker/gateway/entrypoint.sh).
+    owners = sorted(f"{d} {s['name']}" for s in data["systems"] for d in s.get("domains", []))
+    path = WG_PROFILE.with_name("dns-owners")
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
     tmp.replace(path)

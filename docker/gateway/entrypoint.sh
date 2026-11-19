@@ -3,8 +3,8 @@
 # reachable: they are the Mac profile's AllowedIPs, the firewall's allow-list, and the only routes. Each one goes
 # to the VPN container that publishes it in /state while that VPN is connected, and nowhere otherwise (never out
 # through Docker's internet connection). Nothing on the VPN side can open a connection to the Mac.
-# It also collects the DNS each connected VPN pushed (/state/<name>.dns) into /keys/dns ("domain server..." lines)
-# for the macOS tunnel service, keeping only servers that are inside the subnets.
+# It also writes /keys/dns ("domain server..." lines) for the macOS tunnel service: the domains approved for each
+# connected VPN (/keys/dns-owners), with the DNS servers that VPN pushed inside its own subnets.
 set -euo pipefail
 umask 077
 
@@ -116,20 +116,23 @@ while :; do
       unset "routed[$net]"
     fi
   done
-  # DNS of connected systems: one line per domain with its servers inside the subnets. Odd names are dropped.
+  # DNS of connected systems: one line per domain the user approved for that VPN (data/wireguard/dns-owners), with
+  # the DNS servers it pushed that are inside its own subnets. Domains the VPN pushed are only suggestions for the
+  # page: a VPN cannot take over another organization's names or public ones such as a big website's.
   dns=""
-  printf '%s\n' $static > /tmp/static
   for f in /state/*/*.dns; do
     [ -e "$f" ] || continue
     name=$(basename "$(dirname "$f")")
     [ "$f" = "/state/$name/$name.dns" ] || continue
     getent hosts "$name" >/dev/null || continue
+    awk -v n="$name" '$2 == n { print $1 }' "$KEYS/route-owners" 2>/dev/null > /tmp/own-nets || true
     servers=""
     for ip in $(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }' "$f"); do
-      inside "$ip" /tmp/static && servers+=" $ip"
+      inside "$ip" /tmp/own-nets && servers+=" $ip"
     done
     [ -n "$servers" ] || continue
-    for domain in $(awk '$1 == "domain" { print tolower($2) }' "$f" | grep -E '^[a-z0-9-]+(\.[a-z0-9-]+)+$'); do
+    for domain in $(awk -v n="$name" '$2 == n { print $1 }' "$KEYS/dns-owners" 2>/dev/null |
+                    grep -E '^[a-z0-9-]+(\.[a-z0-9-]+)+$'); do
       dns+="$domain$servers"$'\n'
     done
   done

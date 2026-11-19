@@ -1031,20 +1031,45 @@ function renderAddresses(card, sys) {
 function renderNames(card, sys, st) {
     const dns = st?.tunnel_up ? st.dns : null;
     const listed = new Set((sys?.subnets ?? []).map((n) => n.split(" ports ")[0].split(" as ")[0].replace(/\/32$/, "")));
-    const key = JSON.stringify([dns, [...listed]]);
+    const approved = sys?.domains ?? [];
+    const key = JSON.stringify([dns, [...listed], approved]);
     if (card.namesBody.dataset.key === key)
         return;
     card.namesBody.dataset.key = key;
     card.namesBody.replaceChildren();
+    // Only approved domains are resolved through this VPN; what it pushed is a suggestion.
+    const all = [...new Set([...approved, ...(dns?.domains ?? [])])].sort();
+    if (all.length) {
+        const names = h("ul", "servers"); // one row per name, like the name servers below
+        for (const d of all) {
+            const li = h("li");
+            li.append(h("span", "mono", d));
+            if (approved.includes(d)) {
+                li.append(h("span", "muted small", "used for this VPN"));
+                const remove = button("Stop using", "btn-quiet btn-small");
+                remove.setAttribute("aria-label", "Stop using " + d);
+                remove.addEventListener("click", () => void changeDomains(card, (n) => n.filter((x) => x !== d)));
+                li.append(remove);
+            }
+            else {
+                li.append(h("span", "muted small", "sent by the VPN, not used"));
+                const use = button("Use", "btn-small");
+                use.setAttribute("aria-label", "Use " + d + " for this VPN");
+                use.addEventListener("click", () => void changeDomains(card, (n) => [...n, d]));
+                li.append(use);
+            }
+            names.append(li);
+        }
+        card.namesBody.append(h("h3", "section-title", "Names"), names, h("p", "muted small", "Your computer looks " +
+            "up a name through this VPN only after you press Use. Use only the organization's own domains."));
+    }
     if (!dns) {
         card.namesBody.append(h("p", "empty", st?.tunnel_up ? "This VPN sent no name servers."
             : "Connect this VPN to see the names it serves."));
         return;
     }
-    const names = h("ul", "names");
-    for (const d of dns.domains)
-        names.append(h("li", "mono", d));
-    card.namesBody.append(h("h3", "section-title", "Names this VPN answers"), dns.domains.length ? names : h("p", "muted", "No names; reach its servers by address."));
+    if (!all.length)
+        card.namesBody.append(h("p", "muted", "No names; reach its servers by address."));
     const servers = h("ul", "servers");
     for (const ip of dns.servers) {
         const li = h("li");
@@ -1385,6 +1410,23 @@ async function changeSubnets(card, change) {
         showInfo(card.addrMsg, r.data.note);
     await refresh("systems", true);
     void loadRoutes(true);
+    return true;
+}
+async function changeDomains(card, change) {
+    clearMsg(card.msg);
+    const sys = systems.find((s) => s.name === card.name);
+    if (!sys)
+        return false;
+    const body = { method: sys.method, host: sys.host, subnets: sys.subnets,
+        domains: change([...sys.domains]) };
+    if (sys.user)
+        body.user = sys.user;
+    const r = await api("PUT", sysPath(card.name), body);
+    if (!r.ok) {
+        showError(card.msg, r, "Could not save:");
+        return false;
+    }
+    await refresh("systems", true);
     return true;
 }
 // ---------- polling ----------

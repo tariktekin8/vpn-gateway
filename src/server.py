@@ -232,6 +232,8 @@ def view(s):
         "user": text("user"),
         "subnets": [str(n) for n in subnets] if isinstance(subnets, list) else [],
         "idle_minutes": s.get("idle_minutes") if type(s.get("idle_minutes")) is int else None,
+        "domains": [d for d in s.get("domains", []) if isinstance(d, str)] if isinstance(s.get("domains"), list)
+        else [],
     }
 
 
@@ -266,6 +268,9 @@ def build_entry(name, body, existing):
         errors.append("'user' must be a string")
     if not isinstance(subnets, list) or not all(isinstance(n, str) for n in subnets):
         errors.append("'subnets' must be a list of strings")
+    domains = body.get("domains", existing.get("domains", []) if existing else [])
+    if not isinstance(domains, list) or not all(isinstance(d, str) for d in domains):
+        errors.append("'domains' must be a list of strings")
     idle = body.get("idle_minutes", existing.get("idle_minutes") if existing else None)
     if idle is not None and type(idle) is not int:
         errors.append("'idle_minutes' must be a whole number or null")
@@ -281,6 +286,11 @@ def build_entry(name, body, existing):
         entry.pop("user", None)
     entry.pop("password", None)  # older versions stored it; it is asked at every login now
     entry["subnets"] = [n.strip() for n in subnets]
+    domains = sorted({d.strip().lower().rstrip(".") for d in domains if d.strip()})
+    if domains:
+        entry["domains"] = domains  # validate() checks names and overlaps
+    else:
+        entry.pop("domains", None)
     if idle:
         entry["idle_minutes"] = idle  # validate() checks the range
     else:
@@ -472,7 +482,7 @@ class App:
 
     def create(self, payload):
         body = as_object(payload)
-        check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes"})
+        check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes", "domains"})
         with self.save_lock:
             data = self.doc_for_write()
             entry = build_entry(body.get("name"), body, None)
@@ -487,7 +497,7 @@ class App:
             idx = next((i for i, s in enumerate(systems) if s["name"] == name), None)
             if idx is None:
                 raise HttpError(404, {"error": "unknown system"})
-            check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes"})
+            check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes", "domains"})
             if "name" in body and body["name"] != name:
                 raise HttpError(400, {"error": "a system cannot be renamed; delete it and add a new one"})
             entry = build_entry(name, body, systems[idx])
