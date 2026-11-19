@@ -57,6 +57,9 @@ INPUT_FIFO = "/run/vpn/in"
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 
 
+MAX_IDLE_MINUTES = 1440
+
+
 def validate(data):
     """Return a list of error strings; empty means valid."""
     systems = data.get("systems") if isinstance(data, dict) else None
@@ -94,6 +97,9 @@ def validate(data):
             # A leading "-" would become a VPN client option; "$" is expanded by compose; spaces split arguments.
             if isinstance(value, str) and (value.startswith("-") or re.search(r"[\s$]", value)):
                 errors.append(f"{where}: '{field}' must not start with '-' or contain spaces or '$'")
+        idle = s.get("idle_minutes")
+        if idle is not None and (type(idle) is not int or not 1 <= idle <= MAX_IDLE_MINUTES):
+            errors.append(f"{where}: 'idle_minutes' must be a whole number from 1 to {MAX_IDLE_MINUTES}")
         subnets = s.get("subnets", [])
         if not isinstance(subnets, list):
             errors.append(f"{where}: 'subnets' must be a list")
@@ -128,6 +134,8 @@ def render(data):
         env = {"VPN_NAME": s["name"], "VPN_HOST": s["host"], "VPN_SUBNETS": " ".join(subnets_env(s))}
         if "user" in s:
             env["VPN_USER"] = s["user"]
+        if s.get("idle_minutes"):
+            env["VPN_IDLE_MINUTES"] = str(s["idle_minutes"])  # docker/common/hub-link.sh disconnects when idle
         svc = {
             "build": {"context": "../docker", "dockerfile": f"{method['image']}/Dockerfile"},
             "image": f"vpn-{method['image']}",
@@ -245,6 +253,8 @@ def parse_subnet(entry):
     if not isinstance(entry, str):
         raise ValueError("")
     parts = entry.split()
+    if subnet_ports(entry):
+        parts = parts[:-2]
     if len(parts) == 1:
         real = shown = ipaddress.ip_network(parts[0])
     elif len(parts) == 3 and parts[1] == "as":
@@ -254,6 +264,26 @@ def parse_subnet(entry):
     else:
         raise ValueError('write a range, or "<range> as <other range>"')
     return real, shown
+
+
+def subnet_ports(entry):
+    """Ports at the end of a subnets entry ("10.20.0.15 ports 443,3389"); [] means every port.
+
+    The gateway then forwards only TCP and UDP to those ports of that range (docker/gateway/entrypoint.sh).
+    """
+    parts = entry.split() if isinstance(entry, str) else []
+    if "ports" not in parts:
+        return []
+    if parts.index("ports") != len(parts) - 2:
+        raise ValueError('write "ports" last, for example "10.20.0.15 ports 443,3389"')
+    ports = set()
+    for p in parts[-1].split(","):
+        if not p.isdigit() or not 1 <= int(p) <= 65535:
+            raise ValueError(f"bad port {p!r}; use numbers from 1 to 65535, separated by commas")
+        ports.add(int(p))
+    if len(ports) > 15:  # iptables multiport takes at most 15
+        raise ValueError("at most 15 ports per address")
+    return sorted(ports)
 
 
 def configured_subnets(system):
@@ -298,6 +328,13 @@ def write_static_routes(data):
     path = WG_PROFILE.with_name("route-owners")
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
+    tmp.replace(path)
+    # "subnet port,port": the gateway forwards only to these ports there. Subnets not listed: every port.
+    limits = sorted(f"{parse_subnet(n)[1]} {','.join(map(str, subnet_ports(n)))}"
+                    for s in data["systems"] for n in s.get("subnets", []) if n != "TODO" and subnet_ports(n))
+    path = WG_PROFILE.with_name("port-limits")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes("".join(line + "\n" for line in limits).encode("utf-8"))
     tmp.replace(path)
 
 

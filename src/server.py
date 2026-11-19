@@ -231,6 +231,7 @@ def view(s):
         "host": text("host"),
         "user": text("user"),
         "subnets": [str(n) for n in subnets] if isinstance(subnets, list) else [],
+        "idle_minutes": s.get("idle_minutes") if type(s.get("idle_minutes")) is int else None,
     }
 
 
@@ -265,6 +266,9 @@ def build_entry(name, body, existing):
         errors.append("'user' must be a string")
     if not isinstance(subnets, list) or not all(isinstance(n, str) for n in subnets):
         errors.append("'subnets' must be a list of strings")
+    idle = body.get("idle_minutes", existing.get("idle_minutes") if existing else None)
+    if idle is not None and type(idle) is not int:
+        errors.append("'idle_minutes' must be a whole number or null")
     if errors:
         raise HttpError(400, {"errors": errors})
     entry = dict(existing) if existing else {}
@@ -277,6 +281,10 @@ def build_entry(name, body, existing):
         entry.pop("user", None)
     entry.pop("password", None)  # older versions stored it; it is asked at every login now
     entry["subnets"] = [n.strip() for n in subnets]
+    if idle:
+        entry["idle_minutes"] = idle  # validate() checks the range
+    else:
+        entry.pop("idle_minutes", None)  # null or 0: stay connected
     return entry
 
 
@@ -464,7 +472,7 @@ class App:
 
     def create(self, payload):
         body = as_object(payload)
-        check_keys(body, {"name", "method", "host", "user", "subnets"})
+        check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes"})
         with self.save_lock:
             data = self.doc_for_write()
             entry = build_entry(body.get("name"), body, None)
@@ -479,7 +487,7 @@ class App:
             idx = next((i for i, s in enumerate(systems) if s["name"] == name), None)
             if idx is None:
                 raise HttpError(404, {"error": "unknown system"})
-            check_keys(body, {"name", "method", "host", "user", "subnets"})
+            check_keys(body, {"name", "method", "host", "user", "subnets", "idle_minutes"})
             if "name" in body and body["name"] != name:
                 raise HttpError(400, {"error": "a system cannot be renamed; delete it and add a new one"})
             entry = build_entry(name, body, systems[idx])

@@ -193,7 +193,8 @@ Ask the IT team that gave you the VPN, or look at the settings of the VPN app th
 | **Method** | `gp-password`: GlobalProtect with a user name and password. `gp-saml`: GlobalProtect that opens a sign-in page. `forti-saml`: FortiGate (FortiClient) that opens a sign-in page. |
 | **Host** | The VPN address, for example `vpn1.example.com`. Add `:port` if they gave you a port, for example `vpn3.example.com:10443`. |
 | **User** | Your VPN user name (only for `gp-password`). |
-| **Subnets** | The addresses you want to reach through this VPN, one per line, for example `10.20.0.15`. **Only these go through the VPN; nothing else does.** Add the VPN's DNS server too if you want to use names. If two VPNs use the same addresses, write `10.10.0.0/16 as 100.64.0.0/16` for one of them and use the second range to reach it. |
+| **Subnets** | The addresses you want to reach through this VPN, one per line, for example `10.20.0.15`. **Only these go through the VPN; nothing else does.** Add the VPN's DNS server too if you want to use names. To allow only some ports, add them at the end: `10.20.0.15 ports 443,3389`. If two VPNs use the same addresses, write `10.10.0.0/16 as 100.64.0.0/16` for one of them and use the second range to reach it. |
+| **Disconnect when idle** | Optional. Minutes without traffic from your computer after which the VPN disconnects, for example `120`. Empty: it stays connected. |
 
 ## Every day
 
@@ -400,6 +401,7 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 | `host`     | all                        | VPN address, as you would type it in the official client. Add `:port` if it is not 443. |
 | `user`     | `gp-password`              | Your VPN user name. |
 | `subnets`  | optional                   | What your computer sends into this VPN. See below. |
+| `idle_minutes` | optional               | Disconnect after this many minutes (1 to 1440) without traffic from your computer into the tunnel. Traffic from the VPN side does not count. Not set: stay connected. |
 
 **About `subnets`:**
 
@@ -417,6 +419,9 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
   shown range is what goes into the WireGuard profile and the overlap check. Names from that VPN's DNS resolve to
   the real addresses, so reach that VPN by the shown addresses. A DNS server inside a mapped real range is reached
   at its real address, which takes that one address away from the other VPN.
+- **Only some ports:** end the entry with `ports` and up to 15 port numbers, for example `"10.20.0.15 ports 443,3389"`
+  or `"10.10.0.0/16 as 100.64.0.0/16 ports 22"`. The gateway then forwards only TCP and UDP to those ports of that
+  range (`data/wireguard/port-limits`); ping and other ports are dropped. Without `ports`, every port is allowed.
 - `"TODO"` is accepted as a placeholder and ignored.
 - If a range clashes with your home or office network (for example `192.168.0.0/16` against your Wi-Fi's
   `192.168.1.0/24`), list the narrower ranges you need.
@@ -650,7 +655,7 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
     ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
     ├── secrets/               sign-in helper token while vpn web runs; SAML login page from ./vpn login
-    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, dns
+    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, port-limits, dns
 ```
 
 ## Troubleshooting
@@ -730,6 +735,13 @@ other tunnel.
   - Any website can try to open a `globalprotectcallback:` link. While a `gp-saml` login waits, a forged link would
     replace your login with someone else's session for that VPN host. Only start a login when you are about to do
     it.
+- **Your computer reaches every connected organization at once.** If it is compromised, all of them are exposed.
+  The firewall stops connections from the organizations, not from your computer. Keep that exposure small:
+  - List single servers (`10.20.0.15`, saved as `/32`) rather than wide ranges, and add `ports` when you need only
+    a few services.
+  - Disconnect VPNs you are not using, or set `idle_minutes` (**Disconnect when idle**).
+  - Keep disk encryption, system updates and antivirus on. Prefer SAML sign-in with MFA where the organization
+    offers it.
 
 ## Known limits
 

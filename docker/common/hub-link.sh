@@ -37,6 +37,12 @@ vpn_dns() {
   fi
 }
 
+# idle_minutes in systems.json: disconnect when nothing went into the tunnel for that long. Only packets sent
+# into the tunnel count (they come from the computer); traffic arriving from the VPN side does not.
+idle_limit=$(( ${VPN_IDLE_MINUTES:-0} * 60 ))
+idle_for=0
+last_tx=""
+
 while :; do
   routes=""
   dns=""
@@ -49,6 +55,14 @@ while :; do
       ip route replace "${s%%>*}" dev "$iface"
       routes="$routes ${s#*>}"
     done
+    if [ "$idle_limit" -gt 0 ]; then
+      tx=$(cat "/sys/class/net/$iface/statistics/tx_packets" 2>/dev/null || echo 0)
+      if [ "$tx" = "$last_tx" ]; then idle_for=$((idle_for + 5)); else idle_for=0; last_tx=$tx; fi
+      if [ "$idle_for" -ge "$idle_limit" ]; then
+        echo "No traffic for ${VPN_IDLE_MINUTES} minutes: disconnecting (idle_minutes in systems.json)."
+        kill -TERM 1  # the VPN client is PID 1; it logs out and the container stops
+      fi
+    fi
   fi
   printf '%s\n' $routes | sort -u > "$out.tmp" && mv "$out.tmp" "$out"
   printf '%s\n' "$dns" > "$dns_out.tmp" && mv "$dns_out.tmp" "$dns_out"

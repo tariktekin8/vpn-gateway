@@ -70,10 +70,22 @@ last_static="-"
 last_dns="-"  # never a real value, so the first round always writes the file
 while :; do
   static=$(cat "$KEYS/static-routes" 2>/dev/null || true)
-  if [ "$static" != "$last_static" ]; then
+  limits=$(cat "$KEYS/port-limits" 2>/dev/null || true)  # "subnet port,port": only these ports there
+  if [ "$static|$limits" != "$last_static" ]; then
+    declare -A ports=()
+    while read -r net list; do [ -n "$net" ] && ports[$net]=$list; done <<< "$limits"
     iptables -F ALLOWED
-    for net in $static; do iptables -A ALLOWED -d "$net" -j ACCEPT; done
-    last_static=$static
+    for net in $static; do
+      if [ -n "${ports[$net]:-}" ]; then
+        for proto in tcp udp; do
+          iptables -A ALLOWED -d "$net" -p "$proto" -m multiport --dports "${ports[$net]}" -j ACCEPT
+        done
+      else
+        iptables -A ALLOWED -d "$net" -j ACCEPT
+      fi
+    done
+    unset ports
+    last_static="$static|$limits"
   fi
   declare -A want=() owner=()
   while read -r net who; do [ -n "$net" ] && owner[$net]=$who; done < <(cat "$KEYS/route-owners" 2>/dev/null || true)

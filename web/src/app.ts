@@ -20,6 +20,7 @@ interface System {
   host: string | null;
   user: string | null;
   subnets: string[];
+  idle_minutes: number | null;
 }
 
 interface Login {
@@ -611,8 +612,9 @@ function makeCard(name: string): Card {
   const addBtn = h("button", "btn", "Add address");
   addBtn.type = "submit";
   addForm.append(addrInput, addBtn);
-  const addrNote = h("p", "muted small", "Only these addresses go through this VPN. Two VPNs with the same range: " +
-    "write 10.10.0.0/16 as 100.64.0.0/16 and use the second range for this one.");
+  const addrNote = h("p", "muted small", "Only these addresses go through this VPN. Only some ports: write " +
+    "10.20.0.15 ports 443,3389. Two VPNs with the same range: write 10.10.0.0/16 as 100.64.0.0/16 and use the " +
+    "second range for this one.");
   tabs.panels.Addresses.append(addrMsg, addrBody, addForm, addrNote);
 
   // Names
@@ -701,6 +703,7 @@ interface SettingsForm {
   userRow: HTMLLabelElement;
   subnets: HTMLTextAreaElement;
   subnetsRow: HTMLLabelElement;
+  idle: HTMLInputElement;
   save: HTMLButtonElement;
   msg: HTMLDivElement;
   remove: HTMLButtonElement | null;
@@ -719,20 +722,28 @@ function makeSettings(name: string | null): SettingsForm {
   const subnetsEl = h("textarea");
   subnetsEl.rows = 3;
   subnetsEl.spellcheck = false;
-  subnetsEl.placeholder = "10.20.0.15\n10.20.0.0/24";
+  subnetsEl.placeholder = "10.20.0.15 ports 443\n10.20.0.0/24";
+  const idleEl = input("number", "Off");
+  idleEl.min = "1";
+  idleEl.max = "1440";
+  idleEl.step = "1";
+  idleEl.inputMode = "numeric";
 
   const nameRow = field("Name", nameEl, "Lowercase letters, digits and \"-\", starting with a letter. It cannot be " +
     "changed later.");
   const methodRow = field("Type", methodEl);
   const hostRow = field("VPN address", hostEl, "As in the official app. Add :port when it is not 443.");
   const userRow = field("User name", userEl);
-  const subnetsRow = field("Addresses", subnetsEl, "One per line. Only these go through the VPN.");
+  const subnetsRow = field("Addresses", subnetsEl, "One per line. Only these go through the VPN. Add " +
+    "\"ports 443,3389\" to allow only those ports.");
+  const idleRow = field("Disconnect when idle (minutes)", idleEl, "Disconnects after this many minutes without " +
+    "traffic from this computer. Leave empty to stay connected.");
   const save = h("button", "btn btn-primary", name ? "Save changes" : "Add VPN");
   save.type = "submit";
   const msg = msgBox();
   const actions = h("div", "inline end");
   actions.append(save);
-  root.append(nameRow, methodRow, hostRow, userRow, subnetsRow, msg, actions);
+  root.append(nameRow, methodRow, hostRow, userRow, subnetsRow, idleRow, msg, actions);
 
   let remove: HTMLButtonElement | null = null;
   if (name) {
@@ -746,7 +757,7 @@ function makeSettings(name: string | null): SettingsForm {
   }
   const form: SettingsForm = {
     root, name: nameEl, nameRow, method: methodEl, host: hostEl, user: userEl, userRow, subnets: subnetsEl,
-    subnetsRow, save, msg, remove, editing: null, dirty: false,
+    subnetsRow, idle: idleEl, save, msg, remove, editing: null, dirty: false,
   };
   root.addEventListener("input", () => { form.dirty = true; });
   methodEl.addEventListener("change", () => updateSettingsFields(form));
@@ -785,7 +796,14 @@ function fillSettings(form: SettingsForm, sys: System | null): void {
   form.host.value = sys?.host ?? "";
   form.user.value = sys?.user ?? "";
   form.subnets.value = "";
+  form.idle.value = sys?.idle_minutes ? String(sys.idle_minutes) : "";
   updateSettingsFields(form);
+}
+
+// One address per line; a line without "ports" may also list several, separated by commas.
+function splitAddresses(text: string): string[] {
+  return text.split("\n").map((s) => s.trim().replace(/\s+/g, " ")).filter(Boolean)
+    .flatMap((s) => (/ ports /.test(" " + s + " ") ? [s] : s.split(",").map((x) => x.trim()).filter(Boolean)));
 }
 
 async function saveSettings(form: SettingsForm): Promise<void> {
@@ -795,8 +813,8 @@ async function saveSettings(form: SettingsForm): Promise<void> {
   const body: Record<string, unknown> = {
     method: form.method.value,
     host: form.host.value.trim(),
-    subnets: target ? target.subnets
-      : form.subnets.value.split(/[\n,]+/).map((s) => s.trim().replace(/\s+/g, " ")).filter(Boolean),
+    subnets: target ? target.subnets : splitAddresses(form.subnets.value),
+    idle_minutes: form.idle.value.trim() ? Number(form.idle.value) : null,
   };
   if (m.required.includes("user")) body.user = form.user.value.trim();
   const newName = form.name.value.trim();
@@ -1169,9 +1187,11 @@ function renderAddresses(card: Card, sys: System | null): void {
     const e = rs?.entries.find((x) => x.entry === entry);
     const tr = h("tr");
     const addr = h("td", "addr");
-    const parts = entry.split(" as ");
+    const [range, ports] = entry.split(" ports ");
+    const parts = range.split(" as ");
     addr.append(h("span", "mono", parts[0]));
     if (parts[1]) addr.append(h("span", "as", " reached at "), h("span", "mono", parts[1]));
+    if (ports) addr.append(h("span", "as", " · ports "), h("span", "mono", ports));
     const hint = e && rs ? routeHint(e, rs) : "";
     if (hint) addr.append(h("div", "hint", hint));
     const pathCell = h("td");
@@ -1195,7 +1215,7 @@ function renderAddresses(card: Card, sys: System | null): void {
 
 function renderNames(card: Card, sys: System | null, st: SystemStatus | null): void {
   const dns = st?.tunnel_up ? st.dns : null;
-  const listed = new Set((sys?.subnets ?? []).map((n) => n.split(" as ")[0].replace(/\/32$/, "")));
+  const listed = new Set((sys?.subnets ?? []).map((n) => n.split(" ports ")[0].split(" as ")[0].replace(/\/32$/, "")));
   const key = JSON.stringify([dns, [...listed]]);
   if (card.namesBody.dataset.key === key) return;
   card.namesBody.dataset.key = key;
