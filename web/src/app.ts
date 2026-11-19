@@ -10,7 +10,7 @@ type Tone = "ok" | "warn" | "bad" | "busy" | "off";
 
 interface Method {
   required: string[];
-  password: boolean;
+  asks_password: boolean;
   iface: string;
 }
 
@@ -20,7 +20,6 @@ interface System {
   host: string | null;
   user: string | null;
   subnets: string[];
-  has_password: boolean;
 }
 
 interface Login {
@@ -448,12 +447,13 @@ interface Card {
   power: HTMLButtonElement;
   msg: HTMLDivElement;
   error: HTMLParagraphElement;
-  hint: HTMLParagraphElement;
   saml: LoginBlock;
   samlFallback: HTMLDivElement;
   samlFallbackText: HTMLParagraphElement;
   samlFallbackLink: HTMLAnchorElement;
   typed: LoginBlock;
+  pass: LoginBlock;
+  passOpen: boolean;
   forti: HTMLDivElement;
   fortiLink: HTMLAnchorElement;
   fortiNotice: HTMLParagraphElement;
@@ -536,8 +536,6 @@ function makeCard(name: string): Card {
   const msg = msgBox();
   const error = h("p", "error");
   error.hidden = true;
-  const hint = h("p", "muted", "The password from Settings was sent. Approve the sign-in on your phone if asked.");
-  hint.hidden = true;
 
   const saml = makeLoginBlock("login-saml-" + name, "Callback link", "Connect");
   const samlFallback = h("div", "msg");
@@ -556,11 +554,15 @@ function makeCard(name: string): Card {
     " link from the Console at the end, and paste it here.");
   saml.intro.append(h("p", "login-title", "Waiting for your sign-in"), samlFallback, pasteHelp);
 
-  const typed = makeLoginBlock("login-input-" + name, "Password or MFA answer", "Send");
+  const pass = makeLoginBlock("login-pass-" + name, "Password", "Connect");
+  pass.intro.append(h("p", "login-title", "Enter your password"),
+    h("p", "muted", "Asked at every connect. It goes to the VPN and is never stored on this computer."));
+
+  const typed = makeLoginBlock("login-input-" + name, "Code", "Send");
   const typedHelp = h("p", "muted");
-  typedHelp.append("Type the password, and the MFA answer if asked. If this does not work, run ",
-    h("code", undefined, "./vpn login " + name), " in a terminal.");
-  typed.intro.append(h("p", "login-title", "Waiting for your password"), typedHelp);
+  typedHelp.append("If the VPN asks for a code (MFA), type it here. If it keeps waiting, press Disconnect and " +
+    "Connect again, or run ", h("code", undefined, "./vpn login " + name), " in a terminal.");
+  typed.intro.append(h("p", "login-title", "Signing in"), typedHelp);
 
   const forti = h("div", "login");
   forti.hidden = true;
@@ -600,11 +602,12 @@ function makeCard(name: string): Card {
   const settings = makeSettings(name);
   tabs.panels.Settings.append(settings.root);
 
-  root.append(head, msg, error, hint, saml.form, forti, typed.form, tabs.bar, ...Object.values(tabs.panels));
+  root.append(head, msg, error, pass.form, saml.form, forti, typed.form, tabs.bar, ...Object.values(tabs.panels));
 
   const card = {
-    name, pending: null, root, dot, state, kind, power, msg, error, hint,
-    saml, samlFallback, samlFallbackText, samlFallbackLink, typed, forti, fortiLink, fortiNotice,
+    name, pending: null, root, dot, state, kind, power, msg, error,
+    saml, samlFallback, samlFallbackText, samlFallbackLink, typed, pass, passOpen: false, forti, fortiLink,
+    fortiNotice,
     tabs, addrBody, addrMsg, addrInput, namesBody, logs, settings, needsAction: false,
     popup: null, popupUrl: null, popupBlocked: false, popupClosed: false, popupAfter: Infinity, gpAwaitSeen: false,
   } as unknown as Card;
@@ -619,7 +622,12 @@ function makeCard(name: string): Card {
   logs.open = tabs.current === "Logs";
   power.addEventListener("click", () => {
     if (power.dataset.action === "stop") void stopSystem(card);
-    else void startSystem(card);
+    else if (systems.find((s) => s.name === name)?.method === "gp-password") {
+      card.passOpen = !card.passOpen; // the password is asked here, at every connect
+      clearMsg(pass.msg);
+      renderCard(card);
+      if (card.passOpen) pass.input.focus();
+    } else void startSystem(card);
   });
   addForm.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -635,6 +643,19 @@ function makeCard(name: string): Card {
   saml.form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     void sendLogin(card, saml, "callback", "url", "Paste the callback link first.");
+  });
+  pass.form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    clearMsg(pass.msg);
+    const password = pass.input.value;
+    if (!password) {
+      showError(pass.msg, { status: 400, data: { error: "Type the password first." } });
+      pass.input.focus();
+      return;
+    }
+    pass.input.value = "";
+    card.passOpen = false;
+    void startSystem(card, password);
   });
   typed.form.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -653,10 +674,6 @@ interface SettingsForm {
   host: HTMLInputElement;
   user: HTMLInputElement;
   userRow: HTMLLabelElement;
-  password: HTMLInputElement;
-  passwordRow: HTMLLabelElement;
-  clear: HTMLInputElement;
-  clearRow: HTMLLabelElement;
   subnets: HTMLTextAreaElement;
   subnetsRow: HTMLLabelElement;
   save: HTMLButtonElement;
@@ -674,9 +691,6 @@ function makeSettings(name: string | null): SettingsForm {
   const methodEl = h("select");
   const hostEl = input("text", "vpn.example.com");
   const userEl = input("text");
-  const passwordEl = input("password");
-  const clearEl = h("input");
-  clearEl.type = "checkbox";
   const subnetsEl = h("textarea");
   subnetsEl.rows = 3;
   subnetsEl.spellcheck = false;
@@ -687,16 +701,13 @@ function makeSettings(name: string | null): SettingsForm {
   const methodRow = field("Type", methodEl);
   const hostRow = field("VPN address", hostEl, "As in the official app. Add :port when it is not 443.");
   const userRow = field("User name", userEl);
-  const passwordRow = field("Password", passwordEl, "Optional. Without it you type it each time you connect.");
-  const clearRow = h("label", "check");
-  clearRow.append(clearEl, h("span", undefined, "Remove the stored password"));
   const subnetsRow = field("Addresses", subnetsEl, "One per line. Only these go through the VPN.");
   const save = h("button", "btn btn-primary", name ? "Save changes" : "Add VPN");
   save.type = "submit";
   const msg = msgBox();
   const actions = h("div", "inline end");
   actions.append(save);
-  root.append(nameRow, methodRow, hostRow, userRow, passwordRow, clearRow, subnetsRow, msg, actions);
+  root.append(nameRow, methodRow, hostRow, userRow, subnetsRow, msg, actions);
 
   let remove: HTMLButtonElement | null = null;
   if (name) {
@@ -704,18 +715,16 @@ function makeSettings(name: string | null): SettingsForm {
     subnetsRow.hidden = true; // addresses have their own tab
     const danger = h("div", "danger-zone");
     remove = button("Delete " + name, "btn-danger");
-    danger.append(h("p", "muted small", "Deleting disconnects this VPN and removes its settings and stored " +
-      "password from this computer."), remove);
+    danger.append(h("p", "muted small", "Deleting disconnects this VPN and removes its settings from this " +
+      "computer."), remove);
     root.append(danger);
   }
   const form: SettingsForm = {
-    root, name: nameEl, nameRow, method: methodEl, host: hostEl, user: userEl, userRow, password: passwordEl,
-    passwordRow, clear: clearEl, clearRow, subnets: subnetsEl, subnetsRow, save, msg, remove, editing: null,
-    dirty: false,
+    root, name: nameEl, nameRow, method: methodEl, host: hostEl, user: userEl, userRow, subnets: subnetsEl,
+    subnetsRow, save, msg, remove, editing: null, dirty: false,
   };
   root.addEventListener("input", () => { form.dirty = true; });
   methodEl.addEventListener("change", () => updateSettingsFields(form));
-  clearEl.addEventListener("change", () => updateSettingsFields(form));
   root.addEventListener("submit", (ev) => {
     ev.preventDefault();
     void saveSettings(form);
@@ -738,14 +747,8 @@ function fillMethods(select: HTMLSelectElement): void {
 }
 
 function updateSettingsFields(form: SettingsForm): void {
-  const m = methods[form.method.value] ?? { required: [], password: false, iface: "" };
+  const m = methods[form.method.value] ?? { required: [], asks_password: false, iface: "" };
   show(form.userRow, m.required.includes("user"));
-  show(form.passwordRow, m.password);
-  const canClear = m.password && Boolean(form.editing?.has_password);
-  show(form.clearRow, canClear);
-  if (!canClear) form.clear.checked = false;
-  form.password.disabled = form.clear.checked;
-  if (form.clear.checked) form.password.value = "";
 }
 
 function fillSettings(form: SettingsForm, sys: System | null): void {
@@ -756,16 +759,13 @@ function fillSettings(form: SettingsForm, sys: System | null): void {
   form.method.value = sys?.method && methods[sys.method] ? sys.method : Object.keys(methods)[0] ?? "";
   form.host.value = sys?.host ?? "";
   form.user.value = sys?.user ?? "";
-  form.password.value = "";
-  form.password.placeholder = sys?.has_password ? "Stored. Leave empty to keep it." : "";
-  form.clear.checked = false;
   form.subnets.value = "";
   updateSettingsFields(form);
 }
 
 async function saveSettings(form: SettingsForm): Promise<void> {
   clearMsg(form.msg);
-  const m = methods[form.method.value] ?? { required: [], password: false, iface: "" };
+  const m = methods[form.method.value] ?? { required: [], asks_password: false, iface: "" };
   const target = form.editing;
   const body: Record<string, unknown> = {
     method: form.method.value,
@@ -774,10 +774,6 @@ async function saveSettings(form: SettingsForm): Promise<void> {
       : form.subnets.value.split(/[\n,]+/).map((s) => s.trim().replace(/\s+/g, " ")).filter(Boolean),
   };
   if (m.required.includes("user")) body.user = form.user.value.trim();
-  if (m.password) {
-    if (target?.has_password && form.clear.checked) body.clear_password = true;
-    else if (form.password.value) body.password = form.password.value;
-  }
   const newName = form.name.value.trim();
   form.save.disabled = true;
   let r: ApiResult<{ note?: string }>;
@@ -785,8 +781,6 @@ async function saveSettings(form: SettingsForm): Promise<void> {
     r = target ? await api("PUT", sysPath(target.name), body)
       : await api("POST", "/api/systems", { name: newName, ...body });
   } finally {
-    delete body.password;
-    form.password.value = "";
     form.save.disabled = false;
   }
   if (!r.ok) {
@@ -1091,6 +1085,8 @@ function renderCard(card: Card): void {
   show(card.error, Boolean(st?.error));
   show(card.saml.form, Boolean(login?.kind === "gp-saml" && login.awaiting_callback));
   show(card.typed.form, Boolean(login?.kind === "gp-password" && login.awaiting_input));
+  if (running) card.passOpen = false;
+  show(card.pass.form, card.passOpen);
 
   const fortiUrl = login?.kind === "forti-saml" && typeof login.auth_url === "string" ? login.auth_url : "";
   const fortiSafe = fortiUrl.startsWith("https://") || fortiUrl.startsWith("http://");
@@ -1109,9 +1105,6 @@ function renderCard(card: Card): void {
     : card.popupClosed ? "The sign-in window was closed. Use the link above." : "";
   setText(card.fortiNotice, fortiNotice);
   show(card.fortiNotice, Boolean(fortiNotice));
-
-  show(card.hint, Boolean(st && sys?.method === "gp-password" && sys.has_password &&
-    st.state === "running" && !st.tunnel_up && !st.busy));
 
   if (selected === card.name) {
     renderAddresses(card, sys ?? null);
@@ -1405,13 +1398,19 @@ function syncPopup(card: Card, st: SystemStatus | null, login: Login | null, for
 
 // ---------- VPN actions ----------
 
-async function startSystem(card: Card): Promise<void> {
+async function startSystem(card: Card, password?: string): Promise<void> {
   const sys = systems.find((s) => s.name === card.name);
   if (sys?.method === "forti-saml" || sys?.method === "gp-saml") openLoginPopup(card); // before any await
   clearMsg(card.msg);
   card.pending = "Starting…";
   renderCard(card);
-  const r = await api<{ login: string | null; popup_url: string }>("POST", sysPath(card.name, "start"));
+  const body: Record<string, string> | undefined = password === undefined ? undefined : { password };
+  let r: ApiResult<{ login: string | null; popup_url: string }>;
+  try {
+    r = await api<{ login: string | null; popup_url: string }>("POST", sysPath(card.name, "start"), body);
+  } finally {
+    if (body) delete body.password;
+  }
   card.pending = null;
   card.popupAfter = statusReqSeq;
   if (!r.ok) {

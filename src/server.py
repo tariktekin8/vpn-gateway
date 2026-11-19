@@ -14,7 +14,6 @@ import json
 import os
 import re
 import secrets
-import select
 import stat
 import subprocess
 import sys
@@ -26,11 +25,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-try:  # Unix only; on Windows typing into a container from the web app is not available
-    import pty
-    import tty
-except ImportError:
-    pty = tty = None
 
 HERE = Path(__file__).resolve().parent
 
@@ -96,59 +90,16 @@ class Docker:
                            timeout=timeout, env=env, text=True, errors="replace")
         return p.returncode, p.stdout or "", p.stderr or ""
 
-    def send_input(self, container, data):
-        """Type data into a running container's TTY through `docker attach`, then detach.
-
-        The container has a TTY, so docker attach needs a terminal as stdin: give it a pty.
-        --sig-proxy=false keeps the container running when this attach process ends.
-        """
-        if pty is None:
-            raise DockerError("typing into a container needs a Unix terminal; on Windows run: vpn login <name>")
-        argv = ["docker", "attach", "--sig-proxy=false", container]
-        _check_argv(argv)
-        master, slave = pty.openpty()
-        try:
-            tty.setraw(slave)  # no line discipline: Ctrl-Q must reach docker, not act as XON
-            proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
-                                    start_new_session=True)
-        except BaseException:
-            os.close(master)
-            raise
-        finally:
-            os.close(slave)
-        try:
-            _drain(master, proc, 1.0)  # give attach time to connect
-            if proc.poll() is not None:
-                raise DockerError("docker attach ended early; is the container running?")
-            os.write(master, data.encode("utf-8"))
-            time.sleep(0.2)
-            os.write(master, b"\x10\x11")  # Ctrl-P Ctrl-Q: docker's default detach keys
-            _drain(master, proc, 2.0)  # output is read only so the pty never fills; it is discarded
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-            os.close(master)
+    def send_lines(self, container, lines):
+        """Write login lines into the container's login pipe (cli.send_lines). Raises DockerError on failure."""
+        error = cli.send_lines(container, lines)
+        if error:
+            raise DockerError(error)
 
 
 def _check_argv(argv):
     if not isinstance(argv, list) or not argv or argv[0] != "docker" or not all(isinstance(a, str) for a in argv):
         raise ValueError("docker argv must be a list of strings starting with 'docker'")
-
-
-def _drain(fd, proc, seconds):
-    end = time.monotonic() + seconds
-    while time.monotonic() < end and proc.poll() is None:
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if ready:
-            try:
-                os.read(fd, 4096)
-            except OSError:
-                return
 
 
 def parse_dns(text):
@@ -269,7 +220,7 @@ def gateway_routes(text):
 
 
 def view(s):
-    """A system as the API shows it. Never includes the password."""
+    """A system as the API shows it."""
     def text(key):
         value = s.get(key)
         return value if isinstance(value, str) else None
@@ -280,12 +231,11 @@ def view(s):
         "host": text("host"),
         "user": text("user"),
         "subnets": [str(n) for n in subnets] if isinstance(subnets, list) else [],
-        "has_password": bool(s.get("password")),
     }
 
 
 def methods_view():
-    return {k: {"required": list(m["required"]), "password": m["password"], "iface": m["iface"]}
+    return {k: {"required": list(m["required"]), "asks_password": m["asks_password"], "iface": m["iface"]}
             for k, m in cli.METHODS.items()}
 
 
@@ -305,21 +255,16 @@ def build_entry(name, body, existing):
     """Merge a create/update body into a systems.json entry. Type checks only; validate() does the rest."""
     errors = []
     method, host = body.get("method"), body.get("host")
-    user, password = body.get("user"), body.get("password")
+    user = body.get("user")
     subnets = body.get("subnets", [])
-    clear = body.get("clear_password", False)
     if not isinstance(method, str):
         errors.append("'method' must be a string")
     if not isinstance(host, str):
         errors.append("'host' must be a string")
     if user is not None and not isinstance(user, str):
         errors.append("'user' must be a string")
-    if password is not None and not isinstance(password, str):
-        errors.append("'password' must be a string")
     if not isinstance(subnets, list) or not all(isinstance(n, str) for n in subnets):
         errors.append("'subnets' must be a list of strings")
-    if not isinstance(clear, bool):
-        errors.append("'clear_password' must be true or false")
     if errors:
         raise HttpError(400, {"errors": errors})
     entry = dict(existing) if existing else {}
@@ -330,12 +275,7 @@ def build_entry(name, body, existing):
         entry["user"] = user.strip()
     else:
         entry.pop("user", None)
-    if clear:
-        entry.pop("password", None)
-    elif password:
-        entry["password"] = password
-    elif not cli.METHODS.get(method, {}).get("password"):
-        entry.pop("password", None)  # the new method logs in through the browser
+    entry.pop("password", None)  # older versions stored it; it is asked at every login now
     entry["subnets"] = [n.strip() for n in subnets]
     return entry
 
@@ -432,7 +372,7 @@ class App:
             routes = {"PUT": lambda: self.update(name, payload), "DELETE": lambda: self.delete(name)}
         elif len(parts) == 3 and parts[0] == "systems":
             name = parts[1]
-            routes = {"start": {"POST": lambda: self.start(name)},
+            routes = {"start": {"POST": lambda: self.start(name, payload)},
                       "stop": {"POST": lambda: self.stop(name)},
                       "callback": {"POST": lambda: self.callback(name, payload)},
                       "input": {"POST": lambda: self.send_input(name, payload)},
@@ -524,7 +464,7 @@ class App:
 
     def create(self, payload):
         body = as_object(payload)
-        check_keys(body, {"name", "method", "host", "user", "subnets", "password"})
+        check_keys(body, {"name", "method", "host", "user", "subnets"})
         with self.save_lock:
             data = self.doc_for_write()
             entry = build_entry(body.get("name"), body, None)
@@ -539,7 +479,7 @@ class App:
             idx = next((i for i, s in enumerate(systems) if s["name"] == name), None)
             if idx is None:
                 raise HttpError(404, {"error": "unknown system"})
-            check_keys(body, {"name", "method", "host", "user", "subnets", "password", "clear_password"})
+            check_keys(body, {"name", "method", "host", "user", "subnets"})
             if "name" in body and body["name"] != name:
                 raise HttpError(400, {"error": "a system cannot be renamed; delete it and add a new one"})
             entry = build_entry(name, body, systems[idx])
@@ -666,7 +606,7 @@ class App:
                     self.awaiting.discard(t)
 
     def spawn(self, targets, steps):
-        """Run (argv, env) steps in a thread for already claimed targets; stop at the first failure."""
+        """Run (argv, env) steps or callables in a thread for already claimed targets; stop at the first failure."""
         self.threads = [t for t in self.threads if t.is_alive()]
         thread = threading.Thread(target=self._run_steps, args=(targets, steps), daemon=True)
         self.threads.append(thread)
@@ -679,11 +619,17 @@ class App:
     def _run_steps(self, targets, steps):
         error = None
         try:
-            for argv, env in steps:
+            for step in steps:
+                if callable(step):  # sends a login; its message never holds the login itself
+                    step()
+                    continue
+                argv, env = step
                 rc, out, err = self.docker.run(argv, timeout=LONG_TIMEOUT, env=env)
                 if rc:
                     error = short_error(err or out, f"docker compose exited with code {rc}")
                     break
+        except DockerError as e:
+            error = str(e)
         except FileNotFoundError:
             error = "docker not found on PATH"
         except subprocess.TimeoutExpired:
@@ -719,8 +665,16 @@ class App:
             return not_found_static()
         return 200, list(SAML_PAGE_HEADERS), entry[0]
 
-    def start(self, name):
+    def start(self, name, payload=None):
         s = self.require_system(name)
+        password = None
+        if s["method"] == "gp-password":  # asked at every connect, kept in memory only until it is sent
+            body = as_object(payload if payload is not None else {})
+            check_keys(body, {"password"})
+            password = body.pop("password", None)
+            if not isinstance(password, str) or not password or len(password) > MAX_INPUT \
+                    or "\n" in password or "\r" in password:
+                raise HttpError(400, {"error": f"'password' must be one line of 1 to {MAX_INPUT} characters"})
         systems = self.regenerate()
         if name not in systems:
             raise HttpError(404, {"error": "unknown system"})
@@ -752,8 +706,22 @@ class App:
                     popup_url = target
                 self.awaiting.add(name)
             return respond(202, {"ok": True, "login": "gp-saml", "popup_url": popup_url})
+        if password is None:
+            self.launch([name], "starting", [(compose_argv("up", "-d", "--build", GATEWAY), None),
+                                             (compose_argv("up", "-d", "--build", name), None)])
+            return respond(202, {"ok": True, "login": None})
+        lines = [password, password]  # GlobalProtect asks at the portal and again at the gateway
+        del password
+
+        def send():
+            try:
+                self.docker.send_lines(container_of(name), lines)
+            finally:
+                lines.clear()
+        # A fresh container: a new login pipe, no answers left from an earlier login.
         self.launch([name], "starting", [(compose_argv("up", "-d", "--build", GATEWAY), None),
-                                         (compose_argv("up", "-d", "--build", name), None)])
+                                         (compose_argv("up", "-d", "--build", "--force-recreate", name), None),
+                                         send])
         return respond(202, {"ok": True, "login": None})
 
     def callback(self, name, payload):
@@ -773,20 +741,22 @@ class App:
         if name not in systems:
             raise HttpError(404, {"error": "unknown system"})
         self.claim([name], "starting")
-        try:
-            cli.write_private(cli.SECRETS_DIR / f"{name}.cookie", cookie + "\n")
-        except BaseException:
-            self.release([name], "could not write the cookie file")
-            raise
-        finally:
-            del cookie
+        lines = [cookie, cookie]  # memory only: GlobalProtect asks at the portal and again at the gateway
+        del cookie
+
+        def send():
+            try:
+                self.docker.send_lines(container_of(name), lines)
+            finally:
+                lines.clear()
         var = "SAML_" + name.upper().replace("-", "_")
         env = {**os.environ, f"{var}_USER": user, f"{var}_ARGS": f"--usergroup={usergroup}"}
         with self.state_lock:
             self.awaiting.discard(name)
         # A SAML cookie is new on every login, so that container must start fresh.
         self.spawn([name], [(compose_argv("up", "-d", "--build", GATEWAY), None),
-                            (compose_argv("up", "-d", "--build", "--force-recreate", name), env)])
+                            (compose_argv("up", "-d", "--build", "--force-recreate", name), env),
+                            send])
         return respond(202, {"ok": True})
 
     def handler_callback(self, payload):
@@ -848,7 +818,7 @@ class App:
                                         timeout=STATUS_TIMEOUT)
             if out.strip() != "running":
                 raise HttpError(409, {"error": "the container is not running; start it first"})
-            self.docker.send_input(container, text + "\n")
+            self.docker.send_lines(container, [text])
         except FileNotFoundError:
             raise HttpError(503, {"error": "docker not found on PATH"})
         except subprocess.TimeoutExpired:
@@ -970,7 +940,7 @@ class App:
                     holder = r[1].strip() if r and r[0] == 0 else ""
                     if holder and holder != name and re.fullmatch(r"[a-z][a-z0-9-]{0,30}", holder):
                         login["port_used_by"] = holder
-            elif s["method"] == "gp-password" and not s.get("password") and state == "running" and not up:
+            elif s["method"] == "gp-password" and state == "running" and not up:
                 login = {"kind": "gp-password", "awaiting_input": True}
             op = ops.get(name, {})
             out["systems"][name] = {"method": s["method"], "state": state, "iface": iface, "tunnel_up": up,
@@ -1078,6 +1048,8 @@ def main(argv):
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if cli.forget_secrets():
+        print("Removed stored passwords and cookies: VPN Gateway now asks for them at every login.", flush=True)
     app = App(args.port, secrets.token_urlsafe(32))
     server = make_server(app, args.port)
     if not (cli.ROOT / "web" / "index.html").exists():

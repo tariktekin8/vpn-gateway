@@ -76,7 +76,7 @@ flowchart LR
 
 | `method`      | VPN                         | Login                                              | Client in the container |
 |---------------|-----------------------------|----------------------------------------------------|-------------------------|
-| `gp-password` | Palo Alto GlobalProtect     | user name and password (stored or typed), plus MFA | openconnect             |
+| `gp-password` | Palo Alto GlobalProtect     | user name and password (asked at every connect), plus MFA | openconnect             |
 | `gp-saml`     | Palo Alto GlobalProtect     | SAML single sign-on in your browser                | openconnect             |
 | `forti-saml`  | Fortinet FortiGate SSL VPN  | SAML single sign-on in your browser                | openfortivpn            |
 
@@ -191,7 +191,6 @@ Ask the IT team that gave you the VPN, or look at the settings of the VPN app th
 | **Host** | The VPN address, for example `vpn1.example.com`. Add `:port` if they gave you a port, for example `vpn3.example.com:10443`. |
 | **User** | Your VPN user name (only for `gp-password`). |
 | **Subnets** | The addresses you want to reach through this VPN, one per line, for example `10.20.0.15`. **Only these go through the VPN; nothing else does.** Add the VPN's DNS server too if you want to use names. If two VPNs use the same addresses, write `10.10.0.0/16 as 100.64.0.0/16` for one of them and use the second range to reach it. |
-| **Password** | Optional, only for `gp-password`. If you leave it empty, you type it each time you connect. |
 
 ## Every day
 
@@ -199,8 +198,9 @@ Ask the IT team that gave you the VPN, or look at the settings of the VPN app th
 2. Start the page (`./vpn web` in Terminal, `.\vpn.cmd web` in PowerShell) and open
    <http://127.0.0.1:8765/>.
 3. The page shows your VPNs in a list on the left. Pick one and press **Connect**, then log in:
-   - **Password VPNs:** VPN Gateway sends your password, or asks you for it. Approve the sign-in on your phone if
-     the VPN asks for it.
+   - **Password VPNs:** type your password in the box that opens and press **Connect**. VPN Gateway asks for it
+     every time and never stores it. Approve the sign-in on your phone if the VPN asks, or type the code in the
+     **Code** box.
    - **Sign-in page VPNs:** a small window opens with the VPN's sign-in page. Sign in as usual. The window
      closes by itself when you are connected.
      For GlobalProtect sign-in pages (`gp-saml`), install a small helper once so this works by itself:
@@ -265,7 +265,7 @@ On a Mac, names that end in `.local` go to Bonjour (mDNS) first. Reach those ser
   tunnels first.
 - Sign in to one FortiGate VPN at a time: FortiGate sign-ins share port 8020.
 - Test an address with the program you need (browser, SAP, remote desktop). Many networks block ping.
-- A VPN's **Logs** tab shows what it is doing. Remove passwords before you share log lines.
+- A VPN's **Logs** tab shows what it is doing. Check log lines for user names and addresses before you share them.
 
 ## System files VPN Gateway changes
 
@@ -302,7 +302,7 @@ The automatic tunnel also needs `wireguard-tools` from Homebrew (`brew install w
      docker image rm vpn-gateway vpn-openconnect vpn-openfortivpn
      ```
 
-  4. Delete the `vpn-gateway` folder. Its `data/` folder holds your settings and passwords; it is deleted with it.
+  4. Delete the `vpn-gateway` folder. Its `data/` folder holds your settings and WireGuard keys; it is deleted with it.
 
 ---
 
@@ -372,7 +372,6 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
       "method": "gp-password",
       "host": "vpn1.example.com",
       "user": "jdoe",
-      "password": "your-password",
       "subnets": ["10.10.0.0/16"]
     },
     {
@@ -397,7 +396,6 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 | `method`   | all                        | One of the methods in [Supported VPNs](#supported-vpns). |
 | `host`     | all                        | VPN address, as you would type it in the official client. Add `:port` if it is not 443. |
 | `user`     | `gp-password`              | Your VPN user name. |
-| `password` | optional, `gp-password`    | If set, VPN Gateway sends it for you. If missing, you type it at login. Not allowed for SAML methods. |
 | `subnets`  | optional                   | What your computer sends into this VPN. See below. |
 
 **About `subnets`:**
@@ -420,12 +418,11 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 - If a range clashes with your home or office network (for example `192.168.0.0/16` against your Wi-Fi's
   `192.168.1.0/24`), list the narrower ranges you need.
 
-**About passwords:** if any system has a `password`, `data/systems.json` must be readable only by you
-(`chmod 600 data/systems.json`), or VPN Gateway refuses to run. The password is copied to
-`data/secrets/<name>.password` (also mode 600) and reaches the container as a Docker secret. It is never written to
-the compose file or the logs. On Windows, files in your user folder are readable only by you and the
-administrators, so keep the project there. Everything VPN Gateway writes lives in `data/`, which is git-ignored.
-Never commit it.
+**About passwords:** `data/systems.json` holds no password, cookie or token; VPN Gateway refuses one there. It asks
+for a `gp-password` password at every connect and sends it straight into the VPN container (see
+[Security notes](#security-notes)). A file from an older version that still holds `password` is cleaned at the
+next start: the password is removed from `systems.json`, and old password and cookie files in `data/secrets/` are
+deleted. Everything VPN Gateway writes lives in `data/`, which is git-ignored. Never commit it.
 
 Validate the file at any time:
 
@@ -483,9 +480,9 @@ can press Ctrl-C: that only stops following the log, the tunnel stays up.
 
 ### `gp-password`
 
-- With `password` in `data/systems.json`: VPN Gateway sends it. Approve the MFA push on your phone if asked.
-- Without `password`: VPN Gateway attaches your terminal to the container. Type the password (and MFA code if asked),
-  then press Enter. Detach with **Ctrl-P Ctrl-Q**; the tunnel stays up.
+- VPN Gateway asks for the password (the input is hidden) and sends it into the container. Approve the MFA push on
+  your phone if asked.
+- If the log asks for a code, run `./vpn type <name>` in a second terminal and type it.
 
 ### `gp-saml`
 
@@ -512,8 +509,9 @@ link for you, so you skip steps 2, 4 and 5. The command line always asks you to 
 
 ```sh
 ./vpn check            # validate data/systems.json and regenerate the compose file
-./vpn up [name...]     # start containers (all systems if no name); the gateway always starts too
+./vpn up [name...]     # start containers (all if no name) and the gateway; a gp-password one waits for login
 ./vpn login <name>     # start one system and log in
+./vpn type <name>      # send a code (MFA) to a system that asks for one
 ./vpn status           # container, tunnel and route state per system
 ./vpn down [name...]   # stop containers (all if no name)
 docker logs -f vpn-<name>   # follow one VPN's log
@@ -588,7 +586,7 @@ Everything else works the same way on Windows.
 
 - Commands: `.\vpn.cmd` in place of `./vpn`.
 - Names: NRPT rules instead of `/etc/resolver` (see [Reaching servers by name](#reaching-servers-by-name)).
-- Files: Windows has no `chmod 600`. `data/systems.json` and `data\secrets\` stay private because files in your
+- Files: Windows has no `chmod 600`. `data\` (settings and WireGuard keys) stays private because files in your
   user folder are readable only by you and the administrators. Keep the project there.
 
 ### Sign-in helper (Windows)
@@ -610,7 +608,7 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 
 ## How it works
 
-1. `./vpn` reads `data/systems.json`, checks it, writes passwords to `data/secrets/` and writes
+1. `./vpn` reads `data/systems.json`, checks it and writes
    `data/docker-compose.generated.json`: one service per system plus the `gateway` service.
 2. Each VPN container runs its client (openconnect or openfortivpn) with `NET_ADMIN` and `/dev/net/tun`.
    A helper script (`docker/common/hub-link.sh`) adds NAT on the tunnel interface and writes the routes it serves
@@ -646,9 +644,9 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 │   └── windows/               sign-in helper for Windows (Python) and its install scripts
 ├── systems.example.json       example config; copy to data/systems.json
 └── data/                      created by VPN Gateway (or you); git-ignored
-    ├── systems.json           your VPNs (may hold passwords)
+    ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
-    ├── secrets/               passwords, SAML cookies, handler token
+    ├── secrets/               sign-in helper token while vpn web runs; SAML login page from ./vpn login
     └── wireguard/             WireGuard keys, mac.conf, static-routes, dns
 ```
 
@@ -670,14 +668,12 @@ List only the addresses you need in each system's `subnets`. If both really use 
 them under another range: `"10.10.0.0/16 as 100.64.0.0/16"` (see
 [Configure your VPNs](#configure-your-vpns-systemsjson)).
 
-**`gp-password` fails with `fgets (stdin): Inappropriate ioctl for device`.** The gateway asked for input the
-container could not answer (often a second password or MFA prompt). Remove `password` and log in interactively
-with `./vpn login <name>`.
+**`gp-password` keeps asking for the password, or the log shows `512`.** The VPN refused the password. Disconnect,
+then connect again and type it carefully. If it asks for a code, type it in the **Code** box (or
+`./vpn type <name>`).
 
 **`gp-saml` login fails with a "512" or asks for the cookie again.** SAML cookies work once. Run
 `./vpn login <name>` again and paste the new link.
-
-**`data/systems.json holds a password but other users can read it`.** Run `chmod 600 data/systems.json`.
 
 **Port 51820 or 8020 is already in use.** Another WireGuard tunnel or FortiClient uses it. Quit it, or stop the
 other tunnel.
@@ -685,8 +681,10 @@ other tunnel.
 ## Security notes
 
 - VPN Gateway listens on `127.0.0.1` only: the WireGuard port, the FortiGate SAML port and the web page.
-- Passwords, SAML cookies and callback links are never written to the compose file or printed by VPN Gateway. They
-  are stored only in `data/secrets/` and `data/systems.json`, both mode 600.
+- Passwords and SAML cookies are never stored. The page (or `./vpn login`) asks for the password at every connect.
+  The server keeps it in memory only until it sends it, together with a SAML cookie or an MFA code, into the VPN
+  container: through `docker exec -i` into a pipe (FIFO) in a memory-only folder (`/run/vpn`, tmpfs). It never
+  reaches a file, the compose file, an argument list, the environment or a log.
 - WireGuard private keys stay in `data/wireguard/` (mode 600). `mac.conf` and the downloaded `vpn-gateway.conf`
   contain your computer's private key: do not share them.
 - GlobalProtect may ask for a device health report (HIP). VPN Gateway does not send one, so the organization's
@@ -700,8 +698,8 @@ other tunnel.
   - The `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`, and an `Origin` header, if any, must
     match it. This blocks other websites and DNS rebinding. No CORS headers are sent.
   - POST and PUT must use `Content-Type: application/json`; bodies are capped at 64 KB.
-  - The API never returns passwords; it only says `has_password`. The request log holds the method and path,
-    without query strings or bodies.
+  - The API never returns or stores passwords. The request log holds the method and path, without query strings or
+    bodies.
   - A POST gateway's SAML login form is kept in memory only and served once at `/saml/<nonce>` (random, valid for
     5 minutes). It is served with a sandbox Content-Security-Policy without `allow-same-origin`, so it cannot read
     the page token, and with `Referrer-Policy: no-referrer`. The log shows the path as `/saml/-`.
@@ -709,10 +707,8 @@ other tunnel.
     `data/secrets/web-handler.json` (mode 600, with the port). It works only for `/handler/callback`.
     The server deletes the file on exit if the file still holds its token.
   - There is no login screen. The page at `http://127.0.0.1:<port>/` holds the API token, so **any user or process
-    on this computer** that can open a local port can use the whole API while the server runs. That includes
-    editing a system's `host` while it keeps its stored password, so a stored password could be sent to another
-    server. Run `./vpn web` only when you need it, on a computer you do not share, and stop it with Ctrl-C
-    afterwards.
+    on this computer** that can open a local port can use the whole API while the server runs. Run `./vpn web`
+    only when you need it, on a computer you do not share, and stop it with Ctrl-C afterwards.
   - Any website can try to open a `globalprotectcallback:` link. While a `gp-saml` login waits, a forged link would
     replace your login with someone else's session for that VPN host. Only start a login when you are about to do
     it.

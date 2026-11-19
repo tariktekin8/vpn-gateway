@@ -22,8 +22,8 @@ keeps every VPN connection open side by side, and one page in your browser shows
   the VPN. A stop that turns amber tells you what is wrong.
 - **Changes apply at once.** Add or remove an address while a VPN is connected; the session stays up.
 - **Two VPNs with the same addresses.** Map one of them to another range and reach both.
-- **Stays on your computer.** Passwords and settings stay in one folder on your computer. Nothing goes to a cloud
-  service.
+- **Stays on your computer.** Settings stay in one folder on your computer. Passwords are asked at every connect
+  and never stored. Nothing goes to a cloud service.
 - **Mac and Windows.** Runs on Docker Desktop and WireGuard, both free.
 
 ## Before you start

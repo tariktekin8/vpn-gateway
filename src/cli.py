@@ -5,6 +5,7 @@ Usage:
   ./vpn check            validate systems.json
   ./vpn up [name...]     start containers (all systems if no name)
   ./vpn login <name>     start one system and show its login step
+  ./vpn type <name>      send one more answer (an MFA code) to a system that waits for it
   ./vpn status           container and tunnel state per system
   ./vpn down [name...]   stop containers (all if no name)
   ./vpn web [--port N]   start the web page on 127.0.0.1 (default port 8765)
@@ -12,11 +13,11 @@ Usage:
 The gateway container always runs with them: it is the WireGuard server for the Mac and writes the
 Mac profile to data/wireguard/mac.conf (import it in the WireGuard app; re-import when subnets change).
 
-A gp-saml system logs in through the Mac browser: login opens the portal's SAML page, you paste
-the globalprotectcallback: URL it ends on, and its cookie goes to data/secrets/<name>.cookie (600).
+A gp-saml system logs in through the Mac browser: login opens the portal's SAML page and you paste
+the globalprotectcallback: URL it ends on. A gp-password system asks for the password at every login.
 
-A gp-password system may hold "password". Then data/systems.json must be chmod 600; the password
-goes to data/secrets/<name>.password (600) and reaches the container as a Docker secret.
+Passwords and SAML cookies are never stored. They go from memory into the container's login pipe
+(see send_lines), which holds no data on disk.
 """
 import base64
 import getpass
@@ -27,6 +28,7 @@ import re
 import ssl
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -44,12 +46,14 @@ PROJECT = "vpn-gateway"
 
 # Login methods. Each one is an image under docker/, the fields it needs and its tunnel interface.
 METHODS = {
-    "gp-password": {"image": "openconnect", "required": ["host", "user"], "iface": "tun0", "password": True},
-    "forti-saml": {"image": "openfortivpn", "required": ["host"], "iface": "ppp0", "password": False},
-    "gp-saml": {"image": "openconnect", "required": ["host"], "iface": "tun0", "password": False},
+    "gp-password": {"image": "openconnect", "required": ["host", "user"], "iface": "tun0", "asks_password": True},
+    "forti-saml": {"image": "openfortivpn", "required": ["host"], "iface": "ppp0", "asks_password": False},
+    "gp-saml": {"image": "openconnect", "required": ["host"], "iface": "tun0", "asks_password": False},
 }
-# Only "password" is allowed, and only where the method supports it; the rest never go in systems.json.
-SECRET_KEYS = {"pass", "passwd", "secret", "cookie", "token", "key", "private_key"}
+# Secrets never go in systems.json; a password is asked at every login.
+SECRET_KEYS = {"password", "pass", "passwd", "secret", "cookie", "token", "key", "private_key"}
+# The openconnect container reads its login answers from this pipe (docker/openconnect/entrypoint.sh).
+INPUT_FIFO = "/run/vpn/in"
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 
 
@@ -81,11 +85,6 @@ def validate(data):
         if not method:
             errors.append(f"{where}: unknown method {s.get('method')!r}; use one of {sorted(METHODS)}")
             continue
-        if "password" in s:
-            if not method["password"]:
-                errors.append(f"{where}: method {s['method']!r} logs in through the browser; remove 'password'")
-            elif not isinstance(s["password"], str) or not s["password"]:
-                errors.append(f"{where}: 'password' must be a non-empty string")
         for field in method["required"]:
             value = s.get(field)
             if not isinstance(value, str) or not value.strip() or value == "TODO":
@@ -122,8 +121,8 @@ def validate(data):
 
 
 def render(data):
-    """Build the compose file as a dict. Passwords never appear in it, only secret file references."""
-    services, secrets = {}, {}
+    """Build the compose file as a dict. It holds no password or cookie."""
+    services = {}
     for s in data["systems"]:
         method = METHODS[s["method"]]
         env = {"VPN_NAME": s["name"], "VPN_HOST": s["host"], "VPN_SUBNETS": " ".join(subnets_env(s))}
@@ -140,22 +139,14 @@ def render(data):
             "volumes": ["state:/state"],  # tunnel routes for the gateway
             "restart": "no",
         }
-        if s["method"] == "gp-password":
-            svc.update(stdin_open=True, tty=True)  # openconnect asks for the password on the terminal
+        if method["image"] == "openconnect":
+            # The login pipe lives in memory; the password or cookie written to it never reaches a disk.
+            svc["tmpfs"] = ["/run/vpn:mode=0700"]
         if s["method"] == "gp-saml":
             # Set by ./vpn login from the SAML callback; empty otherwise, and the entrypoint stops.
             var = "SAML_" + s["name"].upper().replace("-", "_")
             env["VPN_USER"] = "${" + var + "_USER:-}"
             env["VPN_EXTRA_ARGS"] = "${" + var + "_ARGS:-}"
-            secret = f"{s['name']}_cookie"
-            secrets[secret] = {"file": f"./secrets/{s['name']}.cookie"}
-            svc["secrets"] = [secret]
-            env["VPN_PASSWORD_FILE"] = f"/run/secrets/{secret}"
-        if s.get("password"):
-            secret = f"{s['name']}_password"
-            secrets[secret] = {"file": f"./secrets/{s['name']}.password"}
-            svc["secrets"] = [secret]
-            env["VPN_PASSWORD_FILE"] = f"/run/secrets/{secret}"
         if s["method"] == "forti-saml":
             svc["devices"].append("/dev/ppp")  # the SAML callback reaches it through the gateway's port 8020
         services[s["name"]] = svc
@@ -170,32 +161,68 @@ def render(data):
         "ports": ["127.0.0.1:51820:51820/udp", "127.0.0.1:8020:8020"],
         "restart": "unless-stopped",
     }
-    out = {"name": PROJECT, "services": services, "volumes": {"state": {}}}
-    if secrets:
-        out["secrets"] = secrets
-    return out
+    return {"name": PROJECT, "services": services, "volumes": {"state": {}}}
 
 
 def write_secrets(data):
-    """Write each password to data/secrets/<name>.password (600); delete files of systems without one."""
+    """Prepare data/ for the containers: folders and the gateway's static routes. No password or cookie."""
     SECRETS_DIR.mkdir(mode=0o700, exist_ok=True)
     WG_PROFILE.parent.mkdir(mode=0o700, exist_ok=True)  # gateway keys and Mac profile
-    wanted = {}
-    for s in data["systems"]:
-        if s.get("password"):
-            wanted[f"{s['name']}.password"] = s["password"]
-    for old in SECRETS_DIR.glob("*.password"):
-        if old.name not in wanted:
-            old.unlink()
-    for fname, password in wanted.items():
-        write_private(SECRETS_DIR / fname, password + "\n")
-    cookies = {f"{s['name']}.cookie" for s in data["systems"] if s["method"] == "gp-saml"}
-    for old in SECRETS_DIR.glob("*.cookie"):
-        if old.name not in cookies:
-            old.unlink()
-    for fname in cookies:  # compose needs the secret file to exist; login fills it
-        (SECRETS_DIR / fname).touch(mode=0o600, exist_ok=True)
     write_static_routes(data)
+
+
+def forget_secrets():
+    """Remove what older versions stored: "password" in systems.json, password and cookie files.
+
+    Returns the number of things removed. systems.json is rewritten in place of the old file (mode 600).
+    """
+    removed = 0
+    for old in [*SECRETS_DIR.glob("*.password"), *SECRETS_DIR.glob("*.cookie")]:
+        old.unlink()
+        removed += 1
+    try:
+        data = json.loads(SYSTEMS.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return removed
+    systems = data.get("systems") if isinstance(data, dict) else None
+    holders = [s for s in systems if isinstance(s, dict) and "password" in s] if isinstance(systems, list) else []
+    if holders:
+        for s in holders:
+            del s["password"]
+        tmp = SYSTEMS.with_name(f".systems.{os.getpid()}.tmp")
+        write_private(tmp, json.dumps(data, indent=2) + "\n")
+        tmp.replace(SYSTEMS)
+        removed += len(holders)
+    return removed
+
+
+def send_lines(container, lines, wait=30):
+    """Write lines into the container's login pipe. Return None, or an error message without the lines.
+
+    The lines go from memory to `docker exec -i` and into a FIFO in the container's tmpfs: nothing is written
+    to a disk, an argument list or the environment. The entrypoint creates the FIFO when the container starts.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            ready = subprocess.run(["docker", "exec", container, "test", "-p", INPUT_FIFO],
+                                   capture_output=True, timeout=10).returncode == 0
+        except subprocess.TimeoutExpired:
+            ready = False
+        if ready:
+            break
+        if time.monotonic() > deadline:
+            return "the VPN container is not waiting for a login; connect again"
+        time.sleep(0.5)
+    data = "".join(line + "\n" for line in lines).encode("utf-8")
+    try:
+        p = subprocess.run(["docker", "exec", "-i", container, "sh", "-c", f"cat > {INPUT_FIFO}"],
+                           input=data, capture_output=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        return "docker did not answer in time"
+    finally:
+        del data
+    return None if p.returncode == 0 else "could not send the login to the VPN container"
 
 
 WG_NET = ipaddress.ip_network("10.200.0.0/24")  # the gateway's WireGuard network (docker/gateway/entrypoint.sh)
@@ -319,6 +346,8 @@ def load():
                  "  mkdir -m 700 data && mv systems.json docker-compose.generated.json data/ && "
                  "mv .secrets data/secrets && mv wireguard data/wireguard")
     DATA.mkdir(mode=0o700, exist_ok=True)
+    if forget_secrets():
+        print("Removed stored passwords and cookies: VPN Gateway now asks for them at every login.", file=sys.stderr)
     try:
         data = json.loads(SYSTEMS.read_text())
     except FileNotFoundError:
@@ -328,10 +357,6 @@ def load():
     errors = validate(data)
     if errors:
         sys.exit("systems.json errors:\n  " + "\n  ".join(errors))
-    has_password = any(s.get("password") for s in data["systems"])
-    # Windows has no mode bits here: privacy comes from the ACLs of the user profile folder (see README).
-    if has_password and os.name != "nt" and SYSTEMS.stat().st_mode & 0o077:
-        sys.exit("data/systems.json holds a password but other users can read it; run: chmod 600 data/systems.json")
     write_secrets(data)
     COMPOSE.write_text(json.dumps(render(data), indent=2) + "\n")
     return {s["name"]: s for s in data["systems"]}
@@ -386,35 +411,56 @@ def main(argv):
         if len(args) != 1:
             sys.exit("usage: ./vpn login <name>")
         name = pick(systems, args)[0]
-        env = None
-        if systems[name]["method"] == "gp-saml":
+        method = systems[name]["method"]
+        env, lines = None, None
+        if method == "gp-saml":
             saml_start(systems[name]["host"])
             print("The portal login page is open in the browser. Before logging in, open DevTools (Cmd-Opt-I), Console tab.")
             print("After login the page tries to open a 'globalprotectcallback:...' link. Copy that whole link from")
             print("the Console error or the browser's prompt, and paste it here (input is hidden).")
             user, usergroup, cookie = parse_callback(getpass.getpass("globalprotectcallback URL: "))
-            write_private(SECRETS_DIR / f"{name}.cookie", cookie + "\n")
             var = "SAML_" + name.upper().replace("-", "_")
             env = {**os.environ, f"{var}_USER": user, f"{var}_ARGS": f"--usergroup={usergroup}"}
+            lines = [cookie, cookie]  # GlobalProtect asks at the portal and again at the gateway
             print(f"Logged in as {user}; starting the tunnel.")
+        elif method == "gp-password":
+            password = getpass.getpass(f"Password for {systems[name]['user']}: ")
+            if not password or "\n" in password or "\r" in password:
+                sys.exit("the password must be one non-empty line")
+            lines = [password, password]
+            del password
         rc = compose("up", "-d", "--build", GATEWAY)
         if not rc:
-            # A SAML cookie is new on every login, so that container must start fresh.
-            rc = compose("up", "-d", "--build", *(["--force-recreate"] if env else []), name, env=env)
+            # A login starts the container fresh: a new login pipe, no answers left from an earlier one.
+            rc = compose("up", "-d", "--build", *(["--force-recreate"] if lines else []), name, env=env)
         if rc:
             return rc
         container = f"vpn-{name}"
-        if systems[name]["method"] == "gp-password" and not systems[name].get("password"):
-            print("Type the password (and MFA answer if asked), then Enter. Detach with Ctrl-P Ctrl-Q; the tunnel stays up.")
-            subprocess.call(["docker", "logs", "--tail", "5", container])
-            return subprocess.call(["docker", "attach", container])
-        if env:
-            print("Ctrl-C stops following logs; the tunnel stays up.")
-        elif systems[name].get("password"):
-            print("Password sent from systems.json. Approve MFA on the phone if asked. Ctrl-C stops following logs; the tunnel stays up.")
+        if lines:
+            error = send_lines(container, lines)
+            lines = None
+            if error:
+                sys.exit(error)
+            print(f"Sent. If the log asks for an MFA code, run: ./vpn type {name}")
         else:
-            print("Open the 'Authenticate at' URL in the Mac browser. Ctrl-C stops following logs; the tunnel stays up.")
+            print("Open the 'Authenticate at' URL in the Mac browser.")
+        print("Ctrl-C stops following logs; the tunnel stays up.")
         return subprocess.call(["docker", "logs", "-f", container])
+    if cmd == "type":
+        if len(args) != 1:
+            sys.exit("usage: ./vpn type <name>")
+        name = pick(systems, args)[0]
+        if METHODS[systems[name]["method"]]["image"] != "openconnect":
+            sys.exit(f"{name} logs in through the browser; there is nothing to type")
+        answer = getpass.getpass("Answer (hidden): ")
+        if "\n" in answer or "\r" in answer:
+            sys.exit("the answer must be one line")
+        error = send_lines(f"vpn-{name}", [answer], wait=5)
+        del answer
+        if error:
+            sys.exit(error)
+        print("Sent.")
+        return 0
     if cmd == "status":
         gw = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "wg", "show", "wg0", "latest-handshakes"],
                             capture_output=True, text=True)
