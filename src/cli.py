@@ -136,7 +136,9 @@ def render(data):
             "cap_add": ["NET_ADMIN"],
             "devices": ["/dev/net/tun"],
             "sysctls": {"net.ipv4.ip_forward": "1"},
-            "volumes": ["state:/state"],  # tunnel routes for the gateway
+            # Own network and own state volume: no other VPN container can reach it or change what it publishes.
+            "networks": [f"net-{s['name']}"],
+            "volumes": [f"state-{s['name']}:/state"],  # tunnel routes and DNS for the gateway
             "restart": "no",
         }
         if method["image"] == "openconnect":
@@ -156,12 +158,17 @@ def render(data):
         "container_name": f"vpn-{GATEWAY}",
         "cap_add": ["NET_ADMIN"],
         "sysctls": {"net.ipv4.ip_forward": "1"},
-        "volumes": ["state:/state:ro", "./wireguard:/keys"],
+        # Each VPN's state at /state/<name>/, read-only: the folder name, not the file, says which VPN wrote it.
+        "volumes": [f"state-{s['name']}:/state/{s['name']}:ro" for s in data["systems"]] + ["./wireguard:/keys"],
+        # "default" holds the published ports and the default route; one more network per VPN.
+        "networks": {"default": {"gw_priority": 1}, **{f"net-{s['name']}": {} for s in data["systems"]}},
         # 51820: WireGuard. 8020: FortiGate SAML callbacks, passed to the forti-saml system that is logging in.
         "ports": ["127.0.0.1:51820:51820/udp", "127.0.0.1:8020:8020"],
         "restart": "unless-stopped",
     }
-    return {"name": PROJECT, "services": services, "volumes": {"state": {}}}
+    names = [s["name"] for s in data["systems"]]
+    return {"name": PROJECT, "services": services,
+            "volumes": {f"state-{n}": {} for n in names}, "networks": {f"net-{n}": {} for n in names}}
 
 
 def write_secrets(data):
@@ -265,6 +272,16 @@ def subnets_env(system):
     return out
 
 
+# In the gateway: the forti-saml login started last. Each one writes saml-target in its own state volume.
+SAML_TARGET_CMD = "ls -t /state/*/saml-target 2>/dev/null | head -n 1"
+
+
+def saml_holder(out):
+    """System name from SAML_TARGET_CMD's output (/state/<name>/saml-target), or ""."""
+    parts = out.strip().split("/")
+    return parts[2] if len(parts) == 4 and parts[3] == "saml-target" else ""
+
+
 def write_static_routes(data):
     """List every subnet from systems.json for the gateway (mounted at /keys/static-routes).
 
@@ -275,6 +292,12 @@ def write_static_routes(data):
     path = WG_PROFILE.with_name("static-routes")
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(n + "\n" for n in nets).encode("utf-8"))  # LF, read by the Linux gateway
+    tmp.replace(path)
+    # "subnet name": the gateway routes a subnet only to the VPN it belongs to, whatever another VPN publishes.
+    owners = sorted(f"{n} {s['name']}" for s in data["systems"] for n in configured_subnets(s))
+    path = WG_PROFILE.with_name("route-owners")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
     tmp.replace(path)
 
 
@@ -481,7 +504,7 @@ def main(argv):
                                     capture_output=True).returncode == 0
                 tunnel = f"{iface} up" if up else f"{iface} down"
                 if up:
-                    shared = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "cat", f"/state/{name}.routes"],
+                    shared = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "cat", f"/state/{name}/{name}.routes"],
                                             capture_output=True, text=True)
                     count = len(shared.stdout.split()) if shared.returncode == 0 else 0
                     tunnel += f", {count} routes to Mac" if count else f", no routes to Mac: run ./vpn login {name}"

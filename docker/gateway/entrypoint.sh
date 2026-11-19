@@ -22,12 +22,21 @@ wg set wg0 listen-port 51820 private-key "$KEYS/server.key" \
 ip addr add 10.200.0.1/24 dev wg0
 ip link set wg0 up
 # VPN containers see the gateway as the source, so they need no route back to the Mac.
-iptables -t nat -A POSTROUTING -s "$WG_NET" -o eth0 -j MASQUERADE
+# One network per VPN container (eth1, eth2, ...), plus Docker's default network with the published ports.
+iptables -t nat -A POSTROUTING -s "$WG_NET" -o eth+ -j MASQUERADE
 # Firewall: replies pass; from the Mac only to the subnets (chain ALLOWED, filled below); nothing towards the Mac.
 iptables -N ALLOWED
 iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A FORWARD -i wg0 -o eth0 -j ALLOWED
-iptables -A FORWARD -j DROP
+iptables -A FORWARD -i wg0 -o eth+ -j ALLOWED
+iptables -A FORWARD -j DROP  # also every VPN container towards another one
+# VPN containers may not open connections to the gateway itself (for example the SAML port 8020); only the
+# default network (published ports), WireGuard and replies may.
+DEFAULT_IF=$(ip -4 route show default | awk '{print $5; exit}')
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i wg0 -j ACCEPT
+iptables -A INPUT -i "${DEFAULT_IF:?no default route}" -j ACCEPT
+iptables -A INPUT -j DROP
 
 # FortiGate SAML logins end on http://127.0.0.1:8020/ in the Mac browser. One port serves every forti-saml system:
 # each connection goes to the system whose login runs now (see saml-forward.sh).
@@ -66,16 +75,18 @@ while :; do
     for net in $static; do iptables -A ALLOWED -d "$net" -j ACCEPT; done
     last_static=$static
   fi
-  declare -A want=()
+  declare -A want=() owner=()
+  while read -r net who; do [ -n "$net" ] && owner[$net]=$who; done < <(cat "$KEYS/route-owners" 2>/dev/null || true)
   for net in $static; do want[$net]=unreachable; done  # no VPN connected for it: drop, never fall back to the internet
-  for f in /state/*.routes; do
+  for f in /state/*/*.routes; do
     [ -e "$f" ] || continue
-    name=$(basename "$f" .routes)
+    name=$(basename "$(dirname "$f")")  # the volume's folder, which only that VPN can write
+    [ "$f" = "/state/$name/$name.routes" ] || continue
     hop=$(getent hosts "$name" | awk '{print $1; exit}') || true
     [ -n "$hop" ] || continue
     while read -r net; do
-      # Only subnets from systems.json; anything else a container lists is ignored.
-      [ -n "$net" ] && [ -n "${want[$net]:-}" ] && want[$net]=$hop
+      # Only this VPN's own subnets from systems.json; anything else a container lists is ignored.
+      [ -n "$net" ] && [ -n "${want[$net]:-}" ] && [ "${owner[$net]:-}" = "$name" ] && want[$net]=$hop
     done < "$f"
   done
   for net in "${!want[@]}"; do
@@ -96,9 +107,10 @@ while :; do
   # DNS of connected systems: one line per domain with its servers inside the subnets. Odd names are dropped.
   dns=""
   printf '%s\n' $static > /tmp/static
-  for f in /state/*.dns; do
+  for f in /state/*/*.dns; do
     [ -e "$f" ] || continue
-    name=$(basename "$f" .dns)
+    name=$(basename "$(dirname "$f")")
+    [ "$f" = "/state/$name/$name.dns" ] || continue
     getent hosts "$name" >/dev/null || continue
     servers=""
     for ip in $(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }' "$f"); do
@@ -122,6 +134,6 @@ while :; do
     echo "Mac profile updated: AllowedIPs = $allowed"
     last_allowed=$allowed
   fi
-  unset want
+  unset want owner
   sleep 5
 done

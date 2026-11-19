@@ -103,7 +103,7 @@ def _check_argv(argv):
 
 
 def parse_dns(text):
-    """The DNS a VPN pushed, from its /state/<name>.dns ("nameserver <ip>" and "domain <name>" lines)."""
+    """The DNS a VPN pushed, from its /state/<name>/<name>.dns ("nameserver <ip>" and "domain <name>" lines)."""
     servers, domains = [], []
     for line in text.splitlines():
         parts = line.split()
@@ -545,7 +545,7 @@ class App:
             if running:
                 r = run(["docker", "exec", gw, "getent", "hosts", name])
                 hop = r[1].split()[0] if r and r[0] == 0 and r[1].split() else None
-                r = run(["docker", "exec", gw, "cat", f"/state/{name}.routes"])
+                r = run(["docker", "exec", gw, "cat", f"/state/{name}/{name}.routes"])
                 published = set(r[1].split()) if r and r[0] == 0 else set()
             entries = []
             for entry in s.get("subnets", []):
@@ -924,9 +924,9 @@ class App:
                 r = run(["docker", "exec", container, "ip", "link", "show", iface])
                 up = bool(r) and r[0] == 0
                 if up:
-                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}.routes"])
+                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}/{name}.routes"])
                     routes = len(r[1].split()) if r and r[0] == 0 else 0
-                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}.dns"])
+                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}/{name}.dns"])
                     dns = parse_dns(r[1]) if r and r[0] == 0 else None
             if s["method"] == "gp-saml" and name in awaiting:
                 login = {"kind": "gp-saml", "awaiting_callback": True}
@@ -936,8 +936,8 @@ class App:
                 if url:
                     login = {"kind": "forti-saml", "auth_url": url}
                     # The Mac's callback port 8020 serves one FortiGate login at a time (the last one started).
-                    r = run(["docker", "exec", gw_container, "cat", "/state/saml-target"])
-                    holder = r[1].strip() if r and r[0] == 0 else ""
+                    r = run(["docker", "exec", gw_container, "sh", "-c", cli.SAML_TARGET_CMD])
+                    holder = cli.saml_holder(r[1]) if r and r[0] == 0 else ""
                     if holder and holder != name and re.fullmatch(r"[a-z][a-z0-9-]{0,30}", holder):
                         login["port_used_by"] = holder
             elif s["method"] == "gp-password" and state == "running" and not up:

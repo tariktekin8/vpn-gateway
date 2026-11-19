@@ -97,8 +97,9 @@ More about the requirements:
 
 - macOS on Apple silicon or Intel, or Windows 10/11. The containers are Linux, so the gateway itself also runs on
   Linux.
-- Docker Desktop must include `docker compose` and must be running while you use VPN Gateway. On Windows it uses
-  the **WSL 2** backend (the default).
+- Docker Desktop must include `docker compose` (Docker Engine 28 or later, Compose 2.33 or later: the compose file
+  uses `gw_priority`) and must be running while you use VPN Gateway. On Windows it uses the **WSL 2** backend
+  (the default).
 - Python 3.9 or later. VPN Gateway uses only the standard library, so there is nothing to `pip install`.
 - Only for the [sign-in helper on a Mac](#sign-in-helper-mac): the Xcode Command Line Tools
   (`xcode-select --install`).
@@ -328,7 +329,7 @@ the server; the containers keep running.
 ![Gateway details on top, the VPN list on the left, a connected VPN and its addresses on the right](images/web.png)
 
 - **Addresses** lists every address of the VPN and whether local (`route -n get` on a Mac, the best route on
-  Windows), the gateway (`ip route` in the gateway container) and the VPN container (`/state/<name>.routes`) use it.
+  Windows), the gateway (`ip route` in the gateway container) and the VPN container (`/state/<name>/<name>.routes` in the gateway) use it.
   Adding or removing an address there, or changing subnets in **Settings**, saves `systems.json` and gives a
   connected VPN its new list at once: the page starts the container's `hub-link.sh` again with the new
   `VPN_SUBNETS` and stops the old one, so the VPN session stays up. The automatic tunnel applies the new profile
@@ -614,13 +615,13 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
    `data/docker-compose.generated.json`: one service per system plus the `gateway` service.
 2. Each VPN container runs its client (openconnect or openfortivpn) with `NET_ADMIN` and `/dev/net/tun`.
    A helper script (`docker/common/hub-link.sh`) adds NAT on the tunnel interface and writes the routes it serves
-   to a shared volume, `/state/<name>.routes`, every 5 seconds: the `subnets` from `data/systems.json` (the shown
+   to its own volume (`state-<name>`), `/state/<name>.routes`, every 5 seconds: the `subnets` from `data/systems.json` (the shown
    side of an `as` mapping), never the routes the VPN pushed. Its firewall drops connections opened from the VPN
    side. It also publishes the DNS the VPN pushed to `/state/<name>.dns` (openconnect: from the `resolv.conf`
    vpnc-script writes in the container; openfortivpn: from its "Got addresses … ns […], ns_suffix […]" log line).
 3. The gateway (`docker/gateway/entrypoint.sh`) runs WireGuard on `10.200.0.1/24` and publishes UDP 51820 on
-   `127.0.0.1` only. Every 5 seconds it reads `/state/*.routes`, routes each network to the container that serves
-   it, and rewrites `data/wireguard/mac.conf`. Its `AllowedIPs` hold the `subnets` from `systems.json` (VPN Gateway
+   `127.0.0.1` only. It mounts each VPN's volume read-only at `/state/<name>/`. Every 5 seconds it reads them,
+   routes each network to the VPN it belongs to in `systems.json` (`data/wireguard/route-owners`), and rewrites `data/wireguard/mac.conf`. Its `AllowedIPs` hold the `subnets` from `systems.json` (VPN Gateway
    writes them to `data/wireguard/static-routes`) and nothing else. The same list is the gateway's firewall
    allow-list; a listed range without a connected VPN gets an `unreachable` route, so it never leaks out through
    Docker's network. It collects the DNS of all VPNs into `data/wireguard/dns` ("domain server…" lines), keeping
@@ -649,12 +650,16 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
     ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
     ├── secrets/               sign-in helper token while vpn web runs; SAML login page from ./vpn login
-    └── wireguard/             WireGuard keys, mac.conf, static-routes, dns
+    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, dns
 ```
 
 ## Troubleshooting
 
 **`./vpn status` says "no routes to Mac".** The VPN is not logged in yet. Run `./vpn login <name>`.
+
+**After updating VPN Gateway, a VPN that was connected reaches nothing.** Containers started by an older version
+use the old shared network and volume. Disconnect and connect each VPN once. The old volume `vpn-gateway_state`
+is no longer used; `docker volume rm vpn-gateway_state` removes it.
 
 **The tunnel is up, but your computer reaches nothing.**
 1. Import `data/wireguard/mac.conf` (or the downloaded `vpn-gateway.conf`) in the WireGuard app again and activate
@@ -687,6 +692,11 @@ other tunnel.
   The server keeps it in memory only until it sends it, together with a SAML cookie or an MFA code, into the VPN
   container: through `docker exec -i` into a pipe (FIFO) in a memory-only folder (`/run/vpn`, tmpfs). It never
   reaches a file, the compose file, an argument list, the environment or a log.
+- Each VPN container has its own Docker network (`net-<name>`) and its own state volume (`state-<name>`). Only the
+  gateway joins every network; its firewall forwards only from WireGuard to the listed subnets and drops
+  connections that VPN containers open to it. So a VPN container, even one taken over through a bug in its VPN
+  client, cannot reach another VPN container, send packets into another organization's network, claim another
+  VPN's subnets or take over another VPN's FortiGate SAML callback.
 - WireGuard private keys stay in `data/wireguard/` (mode 600). `mac.conf` and the downloaded `vpn-gateway.conf`
   contain your computer's private key: do not share them.
 - GlobalProtect may ask for a device health report (HIP). VPN Gateway does not send one, so the organization's
