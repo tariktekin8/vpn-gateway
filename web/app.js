@@ -1096,6 +1096,12 @@ function renderAttention() {
         items.push({ tone: "warn", text: "The gateway is off, so no VPN can be reached.", action: "Start gateway",
             run: () => void gatewayAction("start") });
     }
+    else if (g?.running && !g.mac_connected && profileState() === "auto") {
+        // The automatic tunnel brings it up by itself; importing the profile into the WireGuard app would start a
+        // second client with the same key, and the two keep breaking each other.
+        items.push({ tone: "warn", text: "This computer is not connected to the gateway yet. The automatic tunnel " +
+                "connects by itself; if it stays like this, turn off every vpn-gateway tunnel in the WireGuard app." });
+    }
     else if (g?.running && !g.mac_connected) {
         items.push({ tone: "warn", text: "This computer is not connected to the gateway.", action: "Download profile",
             run: () => void downloadProfile($("global-msg")) });

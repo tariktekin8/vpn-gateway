@@ -666,6 +666,12 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 
 **`./vpn status` says "no routes to Mac".** The VPN is not logged in yet. Run `./vpn login <name>`.
 
+**Mac: addresses work only now and then, and `/var/log/vpn-gateway.log` shows "tunnel up" every 5 seconds.** A
+tunnel for VPN Gateway is still on in the WireGuard app (each import adds one, "vpn-gateway (2)" and so on). The two
+clients share one key and keep breaking each other. In the WireGuard app, turn off On-Demand for every vpn-gateway
+tunnel, deactivate them, and delete them if you like: the automatic tunnel does not need them. `scutil --nc list`
+shows which are connected.
+
 **After updating VPN Gateway, names stopped working.** Domains are now used only after you allow them. Open the
 VPN's **Names** tab and press **Use** next to each of the organization's domains.
 
