@@ -21,7 +21,31 @@ const METHOD_LABEL = {
     "gp-saml": "GlobalProtect · single sign-on",
     "forti-saml": "FortiGate · single sign-on",
 };
-const TOKEN = document.querySelector('meta[name="page-token"]')?.getAttribute("content") ?? "";
+const TOKEN_KEY = "vpn-gateway-token";
+const TOKEN = readToken();
+// `./vpn web` prints http://127.0.0.1:<port>/#token=<key>. The fragment never reaches the server; keep the key
+// for this tab only (a reload keeps working) and take it out of the address bar and the history.
+function readToken() {
+    const match = /^#token=([A-Za-z0-9_-]+)$/.exec(window.location.hash);
+    let token = match ? match[1] : "";
+    try {
+        if (token)
+            sessionStorage.setItem(TOKEN_KEY, token);
+        else
+            token = sessionStorage.getItem(TOKEN_KEY) ?? "";
+    }
+    catch {
+        // storage blocked: the key lives only until this page reloads
+    }
+    if (window.location.hash)
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+    return token;
+}
+// A link pasted into an open tab changes only the fragment: load the page again to take the new key.
+window.addEventListener("hashchange", () => {
+    if (/^#token=/.test(window.location.hash))
+        window.location.reload();
+});
 // ---------- state ----------
 let stopped = false; // the token is no longer valid (server restarted)
 let methods = {};
@@ -166,6 +190,12 @@ async function api(method, path, body) {
     const obj = (data && typeof data === "object" ? data : {});
     if (res.status === 403 && obj.error === "missing or wrong token") {
         stopped = true;
+        try {
+            sessionStorage.removeItem(TOKEN_KEY); // stale key from an earlier start
+        }
+        catch {
+            // nothing stored
+        }
         show($("banner-token"), true);
     }
     return { ok: res.ok, status: res.status, data: obj };
@@ -1524,7 +1554,6 @@ buildGateway();
 buildNewView();
 buildMenu();
 $("add-vpn").addEventListener("click", () => select(NEW_VIEW));
-$("reload").addEventListener("click", () => window.location.reload());
 void refresh("systems", true).then(() => refresh("status", true));
 setInterval(() => {
     if (!document.hidden)

@@ -124,7 +124,8 @@ Terminal, and press Enter.
    ./vpn web
    ```
 
-4. Open <http://127.0.0.1:8765/> in your browser. This is your VPN Gateway page.
+4. Your browser opens the VPN Gateway page. If it does not, open the link that `./vpn web` printed
+   (`http://127.0.0.1:8765/#token=...`). The link holds the page's key and changes at every start.
 
 Keep the Terminal window open while you use the page. To stop the page, press Ctrl-C in Terminal. Your VPN
 connections keep running.
@@ -159,7 +160,8 @@ cd vpn-gateway
 
    The folder must stay inside your user folder (`C:\Users\<you>\vpn-gateway`): Windows keeps it private to you
    there. Do not move it to a shared folder.
-4. Open <http://127.0.0.1:8765/> in your browser. This is your VPN Gateway page.
+4. Your browser opens the VPN Gateway page. If it does not, open the link that `./vpn web` printed
+   (`http://127.0.0.1:8765/#token=...`). The link holds the page's key and changes at every start.
 
 Keep the PowerShell window open while you use the page. To stop the page, press Ctrl-C in PowerShell.
 
@@ -195,8 +197,8 @@ Ask the IT team that gave you the VPN, or look at the settings of the VPN app th
 ## Every day
 
 1. Make sure Docker Desktop is running.
-2. Start the page (`./vpn web` in Terminal, `.\vpn.cmd web` in PowerShell) and open
-   <http://127.0.0.1:8765/>.
+2. Start the page (`./vpn web` in Terminal, `.\vpn.cmd web` in PowerShell). It opens in your browser; if it
+   does not, open the link the command printed.
 3. The page shows your VPNs in a list on the left. Pick one and press **Connect**, then log in:
    - **Password VPNs:** type your password in the box that opens and press **Connect**. VPN Gateway asks for it
      every time and never stores it. Approve the sign-in on your phone if the VPN asks, or type the code in the
@@ -311,7 +313,7 @@ The automatic tunnel also needs `wireguard-tools` from Homebrew (`brew install w
 ## Web page
 
 ```sh
-./vpn web              # http://127.0.0.1:8765/
+./vpn web              # opens http://127.0.0.1:8765/#token=<key>
 ./vpn web --port 9000
 ```
 
@@ -693,8 +695,13 @@ other tunnel.
 - Container logs show what the VPN clients print. VPN Gateway does not filter them. Check them before you share
   them.
 - Web page:
-  - At startup the server makes a random token and puts it into the page when it serves it. Every `/api/` request
-    must send it in `X-Gateway-Token`. A restart makes a new token, so reload the page after a restart.
+  - At startup the server makes a random token. It prints it only in the link `http://127.0.0.1:<port>/#token=...`
+    and opens that link in the browser. The page itself holds no token. A browser never sends the part after `#`
+    to the server, so the token is not in request logs or a `Referer` header.
+  - The page reads the token from the link, keeps it in `sessionStorage` (this tab only, kept across a reload) and
+    removes it from the address bar. Every `/api/` request must send it in `X-Gateway-Token`. A restart makes a
+    new token: open the new link. The browser's history may still list the old link; it stops working when the
+    server stops.
   - The `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`, and an `Origin` header, if any, must
     match it. This blocks other websites and DNS rebinding. No CORS headers are sent.
   - POST and PUT must use `Content-Type: application/json`; bodies are capped at 64 KB.
@@ -702,13 +709,14 @@ other tunnel.
     bodies.
   - A POST gateway's SAML login form is kept in memory only and served once at `/saml/<nonce>` (random, valid for
     5 minutes). It is served with a sandbox Content-Security-Policy without `allow-same-origin`, so it cannot read
-    the page token, and with `Referrer-Policy: no-referrer`. The log shows the path as `/saml/-`.
+    the page's `sessionStorage`, and with `Referrer-Policy: no-referrer`. The log shows the path as `/saml/-`.
   - The sign-in helper uses a separate random token, stored while the server runs in
     `data/secrets/web-handler.json` (mode 600, with the port). It works only for `/handler/callback`.
     The server deletes the file on exit if the file still holds its token.
-  - There is no login screen. The page at `http://127.0.0.1:<port>/` holds the API token, so **any user or process
-    on this computer** that can open a local port can use the whole API while the server runs. Run `./vpn web`
-    only when you need it, on a computer you do not share, and stop it with Ctrl-C afterwards.
+  - Only someone with the link can use the API. Keep the link private: anyone who sees it (your screen, the
+    Terminal output, a screenshot) can use the whole API while the server runs. Malware running as your user can
+    still read it from the Terminal or the browser. Run `./vpn web` only when you need it and stop it with Ctrl-C
+    afterwards.
   - Any website can try to open a `globalprotectcallback:` link. While a `gp-saml` login waits, a forged link would
     replace your login with someone else's session for that VPN host. Only start a login when you are about to do
     it.

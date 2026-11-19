@@ -49,7 +49,8 @@ keeps every VPN connection open side by side, and one page in your browser shows
    ```
 
    On Windows, run `.\vpn.cmd web` instead: [Install (Windows)](docs/technical.md#install-windows).
-3. Open <http://127.0.0.1:8765/>, press **Start the gateway**, import the WireGuard profile and add your VPNs:
+3. The page opens in your browser. If it does not, open the link that `./vpn web` printed; it holds the page's
+   key. Press **Start the gateway**, import the WireGuard profile and add your VPNs:
    [First setup on the page](docs/technical.md#first-setup-on-the-page).
 
 ## Documentation

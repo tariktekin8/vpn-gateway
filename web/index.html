@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="no-referrer">
-  <meta name="page-token" content="__PAGE_TOKEN__">
   <title>VPN Gateway</title>
   <link rel="icon" type="image/svg+xml" href="logo.svg">
   <link rel="stylesheet" href="style.css">
@@ -32,8 +31,8 @@
   <div class="page">
     <div id="banners">
       <div id="banner-token" class="banner bad" role="alert" hidden>
-        <span>The server restarted. Reload this page.</span>
-        <button type="button" id="reload" class="btn">Reload</button>
+        <span>This page has no valid key. Open the link that <code>./vpn web</code> printed; it prints a new one
+          at every start.</span>
       </div>
       <div id="banner-net" class="banner bad" role="alert" hidden>
         <span>Cannot reach the VPN Gateway server. Is <code>./vpn web</code> still running?</span>

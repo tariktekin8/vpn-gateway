@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -45,7 +46,6 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=
                 ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
                 ".json": "application/json; charset=utf-8"}
 HANDLER_FILE = "web-handler.json"  # in data/secrets/: port and handler token for the macOS callback handler
-TOKEN_PLACEHOLDER = b"__PAGE_TOKEN__"
 # Present when handlers/macos/install-tunnel.sh runs the tunnel with wg-quick: profile changes then apply by themselves.
 TUNNEL_SERVICE = Path("/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist")
 SAML_PAGE_TTL = 300  # seconds a one-time /saml/<nonce> page lives
@@ -990,8 +990,6 @@ class App:
             data = path.read_bytes()
         except OSError:
             return not_found_static()
-        if name == "index.html":
-            data = data.replace(TOKEN_PLACEHOLDER, self.token.encode("ascii"))
         # Fixed types: on Windows, mimetypes reads the registry, which often maps .js to text/plain;
         # with nosniff the browser then refuses app.js and the page stays on "Loading…".
         ctype = STATIC_TYPES.get(Path(name).suffix.lower(), "application/octet-stream")
@@ -1056,7 +1054,11 @@ def main(argv):
         print("note: web/index.html does not exist yet; only the API answers")
     try:
         app.write_handler_file()  # after make_server: the real port is known
-        print(f"VPN Gateway web app: http://127.0.0.1:{app.port}/  (Ctrl-C stops it)", flush=True)
+        # The token travels in the fragment: the browser never sends it to the server, a log or a Referer.
+        link = f"http://127.0.0.1:{app.port}/#token={app.token}"
+        print(f"VPN Gateway web app (this link is the key; a new one at every start; Ctrl-C stops it):\n{link}",
+              flush=True)
+        webbrowser.open(link)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
