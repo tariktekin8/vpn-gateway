@@ -692,6 +692,18 @@ other tunnel.
 
 ## Security notes
 
+**What VPN Gateway protects against:** traffic passing from one organization's network into another's or towards
+your computer; other websites, users or local-network devices using the management page; passwords and cookies
+leaking from the disk or the logs.
+
+**What it does not protect against:** a compromised computer (it reaches every connected organization; see the
+advice below); unknown bugs in Docker, WireGuard, openconnect or openfortivpn; breaking an organization's policy,
+which is your responsibility (see [Before you start](#before-you-start)).
+
+**DNS:** VPN Gateway never changes your computer's default DNS, so public names never go to an organization's DNS
+server. On a Mac with the automatic tunnel, only the domains a connected VPN pushed go to that VPN's DNS servers.
+When the VPN is off, those names go to your normal DNS again.
+
 - VPN Gateway listens on `127.0.0.1` only: the WireGuard port, the FortiGate SAML port and the web page.
 - Passwords and SAML cookies are never stored. The page (or `./vpn login`) asks for the password at every connect.
   The server keeps it in memory only until it sends it, together with a SAML cookie or an MFA code, into the VPN
