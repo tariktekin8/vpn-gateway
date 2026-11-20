@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates ppp socat iproute2 iptables iputils-ping curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/openfortivpn /usr/local/bin/openfortivpn
-COPY common/hub-link.sh /usr/local/bin/hub-link.sh
+COPY common/hub-link.sh common/hide-cookies.sh /usr/local/bin/
 COPY openfortivpn/entrypoint.sh /entrypoint.sh
 # A Windows checkout has no executable bit.
-RUN chmod 755 /entrypoint.sh /usr/local/bin/hub-link.sh
+RUN chmod 755 /entrypoint.sh /usr/local/bin/hub-link.sh /usr/local/bin/hide-cookies.sh
 ENTRYPOINT ["/entrypoint.sh"]

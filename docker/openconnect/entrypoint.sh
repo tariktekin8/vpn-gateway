@@ -17,5 +17,6 @@ exec 3<>/run/vpn/in
 
 # The first line answers the first prompt; GlobalProtect asks again at the gateway, so the login is sent twice.
 # Default vpnc-script changes routes and DNS only inside this container's own network namespace.
+# Output goes through hide-cookies.sh: openconnect prints the portal's login cookies. exec keeps openconnect PID 1.
 exec openconnect --protocol=gp --user="$VPN_USER" --interface=tun0 --passwd-on-stdin \
-  "$VPN_HOST" ${VPN_EXTRA_ARGS:-} <&3
+  "$VPN_HOST" ${VPN_EXTRA_ARGS:-} <&3 > >(/usr/local/bin/hide-cookies.sh) 2>&1

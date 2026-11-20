@@ -742,8 +742,9 @@ waits about 30 seconds and then fails.
   are installed at build time, so a rebuild takes their security updates. To see what an image holds:
   `docker run --rm --entrypoint dpkg vpn-gateway -l`. To move to a newer Debian image, replace the digest with
   the one `docker buildx imagetools inspect debian:bookworm-slim` shows.
-- Container logs show what the VPN clients print. VPN Gateway does not filter them. Check them before you share
-  them.
+- Container logs show what the VPN clients print, except login cookies: the value of every `...cookie=value` is
+  replaced with `<hidden>` before it reaches the log (`docker/common/hide-cookies.sh`). The logs still hold host
+  names, addresses and your user name: check them before you share them.
 - Web page:
   - At startup the server makes a random token. It prints it only in the link `http://127.0.0.1:<port>/#token=...`
     and opens that link in the browser. The page itself holds no token. A browser never sends the part after `#`

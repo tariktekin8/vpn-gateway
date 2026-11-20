@@ -18,4 +18,6 @@ socat TCP-LISTEN:8021,fork,reuseaddr TCP:127.0.0.1:8020 &
 
 # --set-dns=0: never touch DNS. Routes only change inside this container's own network namespace.
 # exec keeps openfortivpn as PID 1 (it gets docker stop's signal); tee copies its output to the log file.
-exec openfortivpn "$VPN_HOST" --saml-login --set-dns=0 ${VPN_EXTRA_ARGS:-} > >(tee -a "$VPN_LOG") 2>&1
+# hide-cookies.sh hides login cookies (SVPNCOOKIE with -v) before docker logs and the log file see them.
+exec openfortivpn "$VPN_HOST" --saml-login --set-dns=0 ${VPN_EXTRA_ARGS:-} \
+  > >(/usr/local/bin/hide-cookies.sh | tee -a "$VPN_LOG") 2>&1
