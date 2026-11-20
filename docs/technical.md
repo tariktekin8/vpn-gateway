@@ -235,7 +235,9 @@ computer look up any other name through it, for example a public website's or an
 
 **Mac with the [automatic tunnel](#automatic-tunnel-mac):** after you allow a domain, names work by themselves.
 When the VPN connects, VPN Gateway writes `/etc/resolver/<domain>` for each allowed domain within 5 seconds, with
-the DNS servers the VPN sent that are inside its own Subnets; it deletes the file when the VPN disconnects. It only touches files whose first line is `# managed by vpn-gateway`, so a file you wrote yourself
+the DNS servers the VPN sent that are inside its own Subnets. While the VPN is off, the file points at the gateway
+(`10.200.0.1`), which answers every name with "no such name": the lookup fails at once and the internal name never
+goes to your normal DNS. The file is deleted when you stop allowing the domain or delete the VPN. It only touches files whose first line is `# managed by vpn-gateway`, so a file you wrote yourself
 stays as it is: delete your own file if you want VPN Gateway to take over that domain. Every domain and address is
 checked first: the domain needs at least one dot (never a whole top-level domain) and only letters, digits, `-` and
 dots; the servers must be IPv4 addresses.
@@ -580,7 +582,7 @@ sudo handlers/macos/uninstall-tunnel.sh      # remove it
 - The service is a launchd daemon (`com.athenayazilim.vpn-gateway.tunnel`) that runs
   `/usr/local/libexec/vpn-gateway-tunnel` as root. Its log is `/var/log/vpn-gateway.log`. The gateway bar on the
   web page says when it is active (open its **Details**).
-- It writes and removes `/etc/resolver/<domain>` files for the DNS of connected VPNs; `uninstall-tunnel.sh`
+- It writes and removes `/etc/resolver/<domain>` files for the allowed domains of each VPN; `uninstall-tunnel.sh`
   removes the ones it wrote.
 - The tunnel is called `vpn-gateway` (`sudo wg show` lists it under its `utun` name). Its config is a cleaned copy
   at `/etc/wireguard/vpn-gateway.conf`.
@@ -715,8 +717,10 @@ which is your responsibility (see [Before you start](#before-you-start)).
 
 **DNS:** VPN Gateway never changes your computer's default DNS, so public names never go to an organization's DNS
 server. On a Mac with the automatic tunnel, only the domains you allowed for a VPN (`domains`) go to that VPN's DNS
-servers, and only to servers inside its own subnets. Domains a VPN sends are suggestions until you allow them. When
-the VPN is off, those names go to your normal DNS again.
+servers, and only to servers inside its own subnets. Domains a VPN sends are suggestions until you allow them. While
+the VPN is off, those names go to the gateway's DNS (dnsmasq on the WireGuard address only, with no upstream), which
+answers "no such name", so they do not leak to your normal DNS either. If the gateway itself is stopped, the lookup
+waits about 30 seconds and then fails.
 
 - VPN Gateway listens on `127.0.0.1` only: the WireGuard port, the FortiGate SAML port and the web page.
 - Passwords and SAML cookies are never stored. The page (or `./vpn login`) asks for the password at every connect.
