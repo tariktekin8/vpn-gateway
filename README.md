@@ -89,6 +89,7 @@ Everything is in the [documentation](docs/technical.md):
 - [Command line](docs/technical.md#everyday-commands), [configuration file](docs/technical.md#configure-your-vpns-systemsjson),
   [how it works](docs/technical.md#how-it-works) and [security notes](docs/technical.md#security-notes).
 - [Adding a VPN client](docs/adding-a-vpn-client.md): the security rules a new login method must keep.
+- [Changelog](CHANGELOG.md): what each version added.
 
 ## License
 
