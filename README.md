@@ -37,6 +37,25 @@ keeps every VPN connection open side by side, and one page in your browser shows
 >
 > If you are not sure, ask their IT team.
 
+## Security
+
+What VPN Gateway gives you:
+
+- Each organization's VPN runs apart from the others. One organization cannot reach another, and none can open a
+  connection to your computer.
+- Only the addresses you list go through a VPN. Your normal internet and your default DNS stay as they are.
+- Passwords are asked at every connect and never stored. Passwords and login cookies never reach a file or a log.
+- The page works only on your computer, and only with the link that `./vpn web` prints.
+- On a Mac, an organization's internal names go only to that organization, and only after you allow them.
+
+What it cannot give you:
+
+- Protection for a compromised computer: it reaches every connected organization at once.
+- Permission from an organization, a device health report (GlobalProtect HIP) or a managed device.
+- The organization's own filters for the rest of your internet traffic.
+
+Details: [Security notes](docs/technical.md#security-notes).
+
 ## Get started
 
 1. Install **Docker Desktop**, **WireGuard**, **Git** and **Python**: [What you need](docs/technical.md#what-you-need).

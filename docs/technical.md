@@ -433,9 +433,8 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 
 **About passwords:** `data/systems.json` holds no password, cookie or token; VPN Gateway refuses one there. It asks
 for a `gp-password` password at every connect and sends it straight into the VPN container (see
-[Security notes](#security-notes)). A file from an older version that still holds `password` is cleaned at the
-next start: the password is removed from `systems.json`, and old password and cookie files in `data/secrets/` are
-deleted. Everything VPN Gateway writes lives in `data/`, which is git-ignored. Never commit it.
+[Security notes](#security-notes)). Everything VPN Gateway writes lives in `data/`, which is git-ignored. Never
+commit it.
 
 Validate the file at any time:
 
@@ -674,12 +673,8 @@ clients share one key and keep breaking each other. In the WireGuard app, turn o
 tunnel, deactivate them, and delete them if you like: the automatic tunnel does not need them. `scutil --nc list`
 shows which are connected.
 
-**After updating VPN Gateway, names stopped working.** Domains are now used only after you allow them. Open the
+**Addresses work, but names of the organization do not.** A domain is used only after you allow it. Open the
 VPN's **Names** tab and press **Use** next to each of the organization's domains.
-
-**After updating VPN Gateway, a VPN that was connected reaches nothing.** Containers started by an older version
-use the old shared network and volume. Disconnect and connect each VPN once. The old volume `vpn-gateway_state`
-is no longer used; `docker volume rm vpn-gateway_state` removes it.
 
 **The tunnel is up, but your computer reaches nothing.**
 1. Import `data/wireguard/mac.conf` (or the downloaded `vpn-gateway.conf`) in the WireGuard app again and activate
@@ -707,13 +702,49 @@ other tunnel.
 
 ## Security notes
 
-**What VPN Gateway protects against:** traffic passing from one organization's network into another's or towards
-your computer; other websites, users or local-network devices using the management page; passwords and cookies
-leaking from the disk or the logs.
+### What VPN Gateway gives you
 
-**What it does not protect against:** a compromised computer (it reaches every connected organization; see the
-advice below); unknown bugs in Docker, WireGuard, openconnect or openfortivpn; breaking an organization's policy,
-which is your responsibility (see [Before you start](#before-you-start)).
+- **Organizations stay apart.** Each VPN runs in its own container, on its own Docker network, with its own state
+  volume. One organization's network cannot reach another's, even if a VPN client is taken over through a bug.
+- **Nothing comes in.** No connection from an organization's network can reach your computer or the gateway. Only
+  replies to your own connections pass.
+- **Only what you list goes through a VPN.** Only the addresses (and `ports`, if you set them) you list for a VPN
+  enter it. Your normal internet and your default DNS stay as they are.
+- **No stored passwords or cookies.** Passwords are asked at every connect. Passwords, SAML cookies and MFA codes go
+  to the VPN container through a pipe in memory and never reach a file, the environment or a log. Login cookies that
+  the VPN clients print are hidden in the logs.
+- **A private management page.** It listens on `127.0.0.1` only and needs the link that `./vpn web` prints. Other
+  websites, other users on the network and other devices cannot use it.
+- **Internal names stay with their organization** (Mac, automatic tunnel). Only domains you allowed go to that
+  VPN's DNS servers, and only to servers inside its own subnets. While the VPN is off, those names get "no such
+  name" from the gateway instead of going to your normal DNS.
+- **Less exposure when you want it.** Port limits per address, and disconnect when idle.
+- **Images you can review.** The images start from one fixed Debian image, and openfortivpn is built from one
+  fixed commit.
+
+### What VPN Gateway cannot give you
+
+- **Protection for a compromised computer.** Your computer reaches every connected organization at once. Malware on
+  it can reach them all, and can read the page link from the Terminal or the browser. See the advice at the end of
+  this section.
+- **Protection from unknown bugs** in Docker, WireGuard, openconnect or openfortivpn. The separate networks limit
+  what such a bug can reach; they do not remove it.
+- **Permission from the organization.** VPN Gateway does not check an organization's rules for you. Following them
+  is your responsibility: see [Before you start](#before-you-start).
+- **A device health report or a managed device.** VPN Gateway does not send a GlobalProtect HIP report and does not
+  pretend to be a managed device. The organization may limit what you can reach, and it sees a Linux openconnect or
+  openfortivpn client.
+- **The organization's own filters for your internet traffic.** If an organization pushes a full tunnel, only
+  traffic to its listed addresses goes to it. Your other internet traffic does not pass its filters, DLP or IDS. If
+  the organization requires that, do not use VPN Gateway for it.
+- **Clean logs to share.** The logs still hold host names, addresses and your user name. Check them before you share
+  them.
+- **Automatic DNS on Windows.** On Windows you add NRPT rules yourself, and nothing is automatic. VPN Gateway is
+  tested less on Windows than on a Mac.
+- **Hidden internal names when WireGuard is off.** If the WireGuard tunnel itself is down, a lookup of an allowed
+  domain goes to your local network's router, so the name is visible on that network.
+
+### How each part is protected
 
 **DNS:** VPN Gateway never changes your computer's default DNS, so public names never go to an organization's DNS
 server. On a Mac with the automatic tunnel, only the domains you allowed for a VPN (`domains`) go to that VPN's DNS

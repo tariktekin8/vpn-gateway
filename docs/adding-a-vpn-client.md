@@ -18,7 +18,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 
 ## Security checklist
 
-### Isolation (F1)
+### Isolation
 
 - [ ] `render()` gives the container only its own network `net-<name>` and its own volume `state-<name>:/state`.
       Do not add a shared network, a shared volume or `network_mode`.
@@ -34,7 +34,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       published on `127.0.0.1` only. The gateway picks the target from the newest `/state/*/saml-target` by folder
       name (`cli.SAML_TARGET_CMD`, `cli.saml_holder`).
 
-### Secrets (F3, F4)
+### Secrets
 
 - [ ] No password, cookie, token or key is stored: not in `systems.json`, `data/secrets/`, the compose file, an
       environment variable, an argument list, an image or a log. `validate()` refuses `SECRET_KEYS`. Keep that list
@@ -48,7 +48,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 - [ ] If a SAML page or a cookie passes through the server, it is kept in memory only and served once.
       `/saml/<nonce>` is random, valid for 5 minutes, and served with a sandbox CSP and `no-referrer`.
 
-### Logs (F12)
+### Logs
 
 - [ ] The client's stdout and stderr go through `/usr/local/bin/hide-cookies.sh`, with the client still PID 1:
       `exec client ... > >(/usr/local/bin/hide-cookies.sh) 2>&1`. If the client also writes a log file the scripts
@@ -60,7 +60,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 - [ ] Check that prompts without a line end (`Password:`, an MFA code) still show at once in the log.
 - [ ] Do not run the client in a verbose or debug mode by default. Verbose output often prints cookies or headers.
 
-### DNS (F10, F11)
+### DNS
 
 - [ ] Domains the VPN pushes are only suggestions. The Mac uses a domain only after the user approves it for that
       system (`domains`), and a domain cannot belong to two systems.
@@ -72,7 +72,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       "no such name". A new client must not need a change here. If it does, keep internal names away from the
       normal DNS.
 
-### Routing and limits (F5)
+### Routing and limits
 
 - [ ] Only the subnets from `systems.json` go through the tunnel. A subnet with `ports` is limited to those TCP
       and UDP ports by the gateway's `ALLOWED` chain.
@@ -82,7 +82,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       client exits cleanly on `SIGTERM`.
 - [ ] A VPN that pushes a default route changes routing only inside its own container.
 
-### Images (F6)
+### Images
 
 - [ ] The image starts from the pinned `debian:bookworm-slim@sha256:...` digest that the other Dockerfiles use.
 - [ ] A client built from source is pinned to a tag and to its commit. The build stops if the tag moved:
@@ -91,7 +91,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       needs.
 - [ ] Scripts get `chmod 755` in the Dockerfile, because a Windows checkout has no executable bit.
 
-### Honesty towards the organization (F7, F8, F9)
+### Honesty towards the organization
 
 - [ ] Do not fake a device health report (HIP), a managed device or another client's identity. VPN Gateway does
       not deceive the organization's security controls.
