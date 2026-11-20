@@ -2,7 +2,15 @@
 
 What each version of VPN Gateway added or changed. The newest version is on top.
 
+Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. MAJOR changes when an upgrade
+needs you to do something (the version has an "Upgrading" part), MINOR adds features that keep working as before,
+and PATCH only fixes bugs. Each version is a git tag, for example `v2.0.0`.
+
 ## Unreleased
+
+Nothing yet.
+
+## 2.0.0 (2026-11-20)
 
 ### Security
 
