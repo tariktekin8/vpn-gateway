@@ -46,7 +46,7 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=
                 ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
                 ".json": "application/json; charset=utf-8"}
 HANDLER_FILE = "web-handler.json"  # in data/secrets/: port and handler token for the macOS callback handler
-# Present when handlers/macos/install-tunnel.sh runs the tunnel with wg-quick: profile changes then apply by themselves.
+# Present when handlers/macos/install-tunnel.sh runs the tunnel as a service: profile changes then apply by themselves.
 TUNNEL_SERVICE = Path("/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist")
 SAML_PAGE_TTL = 300  # seconds a one-time /saml/<nonce> page lives
 GATEWAY = cli.GATEWAY
@@ -298,16 +298,33 @@ def build_entry(name, body, existing):
     return entry
 
 
-def forti_auth_url(log_text):
-    """The last 'Authenticate at <url>' URL in openfortivpn's output, only if it is http(s)."""
+def state_file_argv(gw, path):
+    """Read a VPN's state file inside the gateway, never through a symlink: a VPN container could point it at the
+    gateway's own key files."""
+    return ["docker", "exec", gw, "find", path, "-maxdepth", "0", "-type", "f", "-exec", "cat", "{}", ";"]
+
+
+def forti_auth_url(log_text, host):
+    """The last 'Authenticate at <url>' URL in openfortivpn's output, only if it is https on the system's own host.
+
+    The page opens it for the user's single sign-on. The log is text from the VPN container and the VPN server, so
+    a URL to any other place (a phishing page) is dropped.
+    """
     url = None
     for line in log_text.splitlines():
         m = AUTH_RE.search(line)
         if m:
             url = m.group(1).strip("'\"")
-    if url and (url.startswith("http://") or url.startswith("https://")):
-        return url
-    return None
+    if not url:
+        return None
+    try:
+        got = urllib.parse.urlsplit(url)
+        want = urllib.parse.urlsplit(f"https://{host}")
+        same = (got.scheme == "https" and got.hostname and got.hostname == want.hostname
+                and (got.port or 443) == (want.port or 443) and not got.username and not got.password)
+    except ValueError:
+        return None
+    return url if same else None
 
 
 class App:
@@ -563,7 +580,7 @@ class App:
             if running:
                 r = run(["docker", "exec", gw, "getent", "hosts", name])
                 hop = r[1].split()[0] if r and r[0] == 0 and r[1].split() else None
-                r = run(["docker", "exec", gw, "cat", f"/state/{name}/{name}.routes"])
+                r = run(state_file_argv(gw, f"/state/{name}/{name}.routes"))
                 published = set(r[1].split()) if r and r[0] == 0 else set()
             entries = []
             for entry in s.get("subnets", []):
@@ -725,6 +742,7 @@ class App:
                 self.awaiting.add(name)
             return respond(202, {"ok": True, "login": "gp-saml", "popup_url": popup_url})
         if password is None:
+            cli.claim_saml_port(systems, [name])
             self.launch([name], "starting", [(compose_argv("up", "-d", "--build", GATEWAY), None),
                                              (compose_argv("up", "-d", "--build", name), None)])
             return respond(202, {"ok": True, "login": None})
@@ -942,21 +960,20 @@ class App:
                 r = run(["docker", "exec", container, "ip", "link", "show", iface])
                 up = bool(r) and r[0] == 0
                 if up:
-                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}/{name}.routes"])
+                    r = run(state_file_argv(gw_container, f"/state/{name}/{name}.routes"))
                     routes = len(r[1].split()) if r and r[0] == 0 else 0
-                    r = run(["docker", "exec", gw_container, "cat", f"/state/{name}/{name}.dns"])
+                    r = run(state_file_argv(gw_container, f"/state/{name}/{name}.dns"))
                     dns = parse_dns(r[1]) if r and r[0] == 0 else None
             if s["method"] == "gp-saml" and name in awaiting:
                 login = {"kind": "gp-saml", "awaiting_callback": True}
             elif s["method"] == "forti-saml" and state == "running" and not up:
                 r = run(["docker", "logs", "--tail", "50", container], merge=True)
-                url = forti_auth_url(r[1]) if r else None
+                url = forti_auth_url(r[1], s["host"]) if r else None
                 if url:
                     login = {"kind": "forti-saml", "auth_url": url}
                     # The Mac's callback port 8020 serves one FortiGate login at a time (the last one started).
-                    r = run(["docker", "exec", gw_container, "sh", "-c", cli.SAML_TARGET_CMD])
-                    holder = cli.saml_holder(r[1]) if r and r[0] == 0 else ""
-                    if holder and holder != name and re.fullmatch(r"[a-z][a-z0-9-]{0,30}", holder):
+                    holder = cli.saml_port_holder()
+                    if holder and holder != name:
                         login["port_used_by"] = holder
             elif s["method"] == "gp-password" and state == "running" and not up:
                 login = {"kind": "gp-password", "awaiting_input": True}

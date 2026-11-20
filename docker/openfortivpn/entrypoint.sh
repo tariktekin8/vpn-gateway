@@ -9,8 +9,8 @@ export VPN_LOG=/run/openfortivpn.log
 : > "$VPN_LOG"
 hub-link.sh ppp0 &
 
-# Claim the Mac's SAML callback port (8020, served by the gateway) for this login; hub-link.sh releases it once
-# the tunnel is up. The last system to start its login gets the port.
+# Say that this login waits for the Mac's SAML callback (port 8020, served by the gateway); hub-link.sh removes it
+# once the tunnel is up. Which login gets the port is chosen on the computer (data/wireguard/saml-target).
 printf '%s\n' "$VPN_NAME" > /state/saml-target
 
 # openfortivpn's SAML listener binds 127.0.0.1 only; expose it on 8021 for the gateway.

@@ -284,7 +284,7 @@ System files change only when you install one of these optional parts, or set up
 
 | Part | System files it writes | Removed by |
 |---|---|---|
-| Automatic tunnel (`sudo handlers/macos/install-tunnel.sh`, runs as root) | `/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist` (a background service)<br>`/usr/local/libexec/vpn-gateway-tunnel` (the service's script)<br>`/etc/wireguard/vpn-gateway.conf` (a copy of the WireGuard profile)<br>`/etc/resolver/<domain>` (one file per VPN domain, marked `# managed by vpn-gateway`)<br>`/var/log/vpn-gateway.log` (its log) | `sudo handlers/macos/uninstall-tunnel.sh` removes all but the log; delete the log with `sudo rm /var/log/vpn-gateway.log` |
+| Automatic tunnel (`sudo handlers/macos/install-tunnel.sh`, runs as root) | `/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist` (a background service)<br>`/Library/PrivilegedHelperTools/vpn-gateway/` (the service's script and its copies of `wg` and `wireguard-go`)<br>`/etc/wireguard/vpn-gateway.conf` (a copy of the WireGuard profile)<br>`/etc/resolver/<domain>` (one file per VPN domain, marked `# managed by vpn-gateway`)<br>`/var/log/vpn-gateway.log` (its log) | `sudo handlers/macos/uninstall-tunnel.sh` removes all but the log; delete the log with `sudo rm /var/log/vpn-gateway.log` |
 | Sign-in helper (`handlers/macos/install.sh`) | `~/Applications/VPN Gateway Callback.app`, registered with macOS to open `globalprotectcallback:` links | `handlers/macos/uninstall.sh` |
 | DNS by hand ([Reaching servers by name](#reaching-servers-by-name)) | The `/etc/resolver/<domain>` files you create | `sudo rm /etc/resolver/<domain>` |
 
@@ -347,7 +347,7 @@ the server; the containers keep running.
   once. If `data/systems.json` is broken, the page shows the error and refuses to save until you fix the file by
   hand.
 - `forti-saml`: Connect opens a pop-up. When the container prints its "Authenticate at" address, the page loads it
-  into the pop-up. After the login FortiGate sends the browser to `http://127.0.0.1:8020/`; the gateway passes it to
+  into the pop-up, but only an `https://` address on the VPN's own `host` and port; any other address is ignored. After the login FortiGate sends the browser to `http://127.0.0.1:8020/`; the gateway passes it to
   the FortiGate VPN whose login runs now, and the page closes the pop-up when the tunnel is up. The "Authenticate
   at" link stays on the VPN's page as the fallback. The page says when another FortiGate login holds the port.
 - `gp-saml`: the login runs in a browser pop-up that the page opens. The server answers Connect with a
@@ -515,7 +515,8 @@ link for you, so you skip steps 2, 4 and 5. The command line always asks you to 
 1. The container prints an `Authenticate at` address. Open it in your browser.
 2. Log in as usual. At the end FortiGate sends the browser to `http://127.0.0.1:8020/`. The gateway serves that port
    and passes it to the FortiGate system whose login runs now, so several `forti-saml` systems work, one login at
-   a time: the last one started gets the port. Nothing to copy.
+   a time: the last one started gets the port. VPN Gateway on your computer picks it, never a VPN container.
+  Nothing to copy.
 
 ## Everyday commands
 
@@ -564,13 +565,12 @@ handlers/macos/uninstall.sh              # unregister and delete it
 
 ## Automatic tunnel (Mac)
 
-Instead of importing the profile in the WireGuard app, VPN Gateway can run the tunnel itself with `wg-quick` as a
-system service. It brings the tunnel up at boot, and applies a new profile within 5 seconds of the gateway writing
+Instead of importing the profile in the WireGuard app, VPN Gateway can run the tunnel itself as a system service. It brings the tunnel up at boot, and applies a new profile within 5 seconds of the gateway writing
 it, so you never download or import again. It also sets up names for the VPNs (see
 [Reaching servers by name](#reaching-servers-by-name)).
 
 ```sh
-brew install wireguard-tools                 # as your user: wg, wg-quick, wireguard-go
+brew install wireguard-tools                 # as your user: wg and wireguard-go
 sudo handlers/macos/install-tunnel.sh        # once; asks for your password
 sudo handlers/macos/uninstall-tunnel.sh      # remove it
 ```
@@ -579,18 +579,26 @@ sudo handlers/macos/uninstall-tunnel.sh      # remove it
   Two clients with the same key fight each other and nothing gets through. If it happens anyway, the service
   notices within 5 seconds that the gateway address left its tunnel and sets the tunnel up again.
 - The service is a launchd daemon (`com.athenayazilim.vpn-gateway.tunnel`) that runs
-  `/usr/local/libexec/vpn-gateway-tunnel` as root. Its log is `/var/log/vpn-gateway.log`. The gateway bar on the
+  `/Library/PrivilegedHelperTools/vpn-gateway/tunnel-service` as root. Its log is `/var/log/vpn-gateway.log`. The gateway bar on the
   web page says when it is active (open its **Details**).
 - It writes and removes `/etc/resolver/<domain>` files for the allowed domains of each VPN; `uninstall-tunnel.sh`
   removes the ones it wrote.
 - The tunnel is called `vpn-gateway` (`sudo wg show` lists it under its `utun` name). Its config is a cleaned copy
   at `/etc/wireguard/vpn-gateway.conf`.
-- Security: wg-quick runs `PreUp`/`PostUp` lines as root, and the profile sits in a folder your user can write.
-  The service therefore never uses the profile as is: it copies only the keys, the address, `AllowedIPs`, the
-  keepalive and an endpoint on `127.0.0.1`. It still runs Homebrew's `wg-quick` and `wireguard-go` as root, which
-  any process running as your user could replace; this is the usual trade-off of `sudo wg-quick` with Homebrew.
-- Run `install-tunnel.sh` again if you move the project folder: the service holds the path of
-  `data/wireguard/mac.conf`.
+- Security: the service runs as root, and its inputs (the profile and the DNS file) sit in a folder your user can
+  write. So:
+  - Root runs nothing from a folder your user can write. The installer copies `wg` and `wireguard-go` into
+    `/Library/PrivilegedHelperTools/vpn-gateway/` (owned by root), and the service's `PATH` holds only system
+    folders. It does not use `wg-quick`, which needs a newer bash than macOS has.
+  - It never uses the profile as is: it copies only the keys, the address, `AllowedIPs` (never a whole-internet
+    `/0`), the keepalive and an endpoint on `127.0.0.1`.
+  - It reads the profile and the DNS file only if they are regular files owned by you, never through a link, and its
+    log shows only checked values.
+  - Your user can still choose which domains get a resolver file. That is the point of allowing domains, but it
+    also means a process running as you can change DNS for those names system-wide.
+- Run `install-tunnel.sh` again if you move the project folder (the service holds the path of
+  `data/wireguard/mac.conf`), and after `brew upgrade` updates `wireguard-tools` or `wireguard-go` (the service
+  runs its own copies).
 
 ## Windows specifics
 

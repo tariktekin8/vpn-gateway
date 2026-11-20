@@ -39,6 +39,17 @@ Nothing yet.
   every `...cookie=value` with `<hidden>`.
 - **Pinned images.** Every image starts from one fixed `debian:bookworm-slim` digest, and openfortivpn is built from
   one fixed commit.
+- **The Mac tunnel service runs nothing your user can change.** It no longer uses `wg-quick` or Homebrew's folders:
+  the installer copies `wg` and `wireguard-go` into root-owned `/Library/PrivilegedHelperTools/vpn-gateway/`, and
+  the service's `PATH` holds only system folders. It reads its inputs only from regular files you own (no links),
+  refuses a `/0` in `AllowedIPs`, and logs only checked values.
+- **The computer picks the FortiGate SAML callback target.** `data/wireguard/saml-target` names the login started
+  last; a VPN container can no longer claim another organization's callback.
+- **Sign-in links are checked.** The FortiGate "Authenticate at" link opens only if it is `https://` on the VPN's
+  own host and port. A `gp-saml` callback is refused if its cookie or user name holds a line break or other control
+  characters.
+- The gateway and the page never read a VPN's state file through a symlink. `./vpn login` deletes the portal's
+  login form from `data/secrets/` once the login is done.
 
 ### Added
 
@@ -66,7 +77,8 @@ Nothing yet.
   key".
 - Names of the organization stop working until you allow their domains: open each VPN's **Names** tab and press
   **Use** next to each domain.
-- Mac with the automatic tunnel: run `sudo handlers/macos/install-tunnel.sh` again.
+- Mac with the automatic tunnel: run `sudo handlers/macos/install-tunnel.sh` again. It moves the service to
+  `/Library/PrivilegedHelperTools/vpn-gateway/` and removes `/usr/local/libexec/vpn-gateway-tunnel`.
 - The old volume `vpn-gateway_state` is no longer used. Remove it with `docker volume rm vpn-gateway_state`.
 
 ## 1.0.0 (2026-11-18)

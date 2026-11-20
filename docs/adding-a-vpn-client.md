@@ -31,8 +31,9 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       (`data/wireguard/route-owners`). Do not bypass that check.
 - [ ] Only `cap_add: NET_ADMIN` and the devices the client needs (`/dev/net/tun`, `/dev/ppp`). No `privileged`.
 - [ ] If the client needs a callback port (like FortiGate SAML on 8020), it goes through the gateway and is
-      published on `127.0.0.1` only. The gateway picks the target from the newest `/state/*/saml-target` by folder
-      name (`cli.SAML_TARGET_CMD`, `cli.saml_holder`).
+      published on `127.0.0.1` only. The computer picks which VPN gets it (`cli.claim_saml_port` writes
+      `data/wireguard/saml-target`), never a VPN container; the container only says that its login waits
+      (`/state/saml-target`).
 
 ### Secrets
 

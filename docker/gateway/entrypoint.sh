@@ -95,7 +95,7 @@ while :; do
   while read -r net who; do [ -n "$net" ] && owner[$net]=$who; done < <(cat "$KEYS/route-owners" 2>/dev/null || true)
   for net in $static; do want[$net]=unreachable; done  # no VPN connected for it: drop, never fall back to the internet
   for f in /state/*/*.routes; do
-    [ -e "$f" ] || continue
+    [ -f "$f" ] && [ ! -L "$f" ] || continue  # a VPN container could point a symlink at /keys/*.key
     name=$(basename "$(dirname "$f")")  # the volume's folder, which only that VPN can write
     [ "$f" = "/state/$name/$name.routes" ] || continue
     hop=$(getent hosts "$name" | awk '{print $1; exit}') || true
@@ -129,7 +129,7 @@ while :; do
   for name in $(awk '{ print $2 }' "$KEYS/dns-owners" 2>/dev/null | grep -E '^[a-z][a-z0-9-]{0,30}$' | sort -u); do
     servers=""
     f="/state/$name/$name.dns"
-    if [ -f "$f" ] && getent hosts "$name" >/dev/null; then
+    if [ -f "$f" ] && [ ! -L "$f" ] && getent hosts "$name" >/dev/null; then
       awk -v n="$name" '$2 == n { print $1 }' "$KEYS/route-owners" 2>/dev/null > /tmp/own-nets || true
       for ip in $(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }' "$f"); do
         inside "$ip" /tmp/own-nets && servers+=" $ip"

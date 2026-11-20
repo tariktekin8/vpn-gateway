@@ -313,14 +313,27 @@ def subnets_env(system):
     return out
 
 
-# In the gateway: the forti-saml login started last. Each one writes saml-target in its own state volume.
-SAML_TARGET_CMD = "ls -t /state/*/saml-target 2>/dev/null | head -n 1"
+# The Mac's FortiGate SAML callback port (8020) goes to the forti-saml login started last. This side picks it, not
+# the VPN containers: a container that is taken over could otherwise claim another organization's login.
+# data/wireguard/saml-target is /keys/saml-target in the gateway (docker/gateway/saml-forward.sh).
+def claim_saml_port(systems, names):
+    """Give port 8020 to the last forti-saml system in names, if any."""
+    forti = [n for n in names if systems[n]["method"] == "forti-saml"]
+    if forti:
+        path = WG_PROFILE.with_name("saml-target")
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(f"{forti[-1]}\n".encode("utf-8"))
+        tmp.replace(path)
 
 
-def saml_holder(out):
-    """System name from SAML_TARGET_CMD's output (/state/<name>/saml-target), or ""."""
-    parts = out.strip().split("/")
-    return parts[2] if len(parts) == 4 and parts[3] == "saml-target" else ""
+def saml_port_holder():
+    """The system that holds port 8020, or ""."""
+    try:
+        name = WG_PROFILE.with_name("saml-target").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return name if NAME_RE.fullmatch(name) else ""
 
 
 def write_static_routes(data):
@@ -385,6 +398,12 @@ def parse_callback(url):
         if cookie and cookie != "empty":
             if not user:
                 sys.exit("callback has a cookie but no saml-username")
+            # Anyone can make a browser open a callback link. Each login line goes to openconnect's stdin, so a line
+            # break here would answer its next prompts; the user name becomes --user.
+            if not re.fullmatch(r"[\x21-\x7e]{1,4096}", cookie):
+                sys.exit("the callback's cookie has characters a SAML cookie never has")
+            if not re.fullmatch(r"[^\x00-\x1f\x7f]{1,256}", user) or user.startswith("-"):
+                sys.exit("the callback's saml-username has characters a user name never has")
             return user, f"gateway:{tag}", cookie
     sys.exit("callback has no prelogin-cookie; the SAML login did not finish")
 
@@ -477,7 +496,9 @@ def main(argv):
                  "  docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=vpnhub)\n"
                  "Your VPN sessions end; log in again afterwards.")
     if cmd == "up":
-        rc = compose("up", "-d", "--build", *with_gateway(pick(systems, args)))
+        names = pick(systems, args)
+        claim_saml_port(systems, names)
+        rc = compose("up", "-d", "--build", *with_gateway(names))
         if not rc:
             print(f"Mac WireGuard profile: {WG_PROFILE.relative_to(ROOT)}")
         return rc
@@ -495,7 +516,11 @@ def main(argv):
             print("The portal login page is open in the browser. Before logging in, open DevTools (Cmd-Opt-I), Console tab.")
             print("After login the page tries to open a 'globalprotectcallback:...' link. Copy that whole link from")
             print("the Console error or the browser's prompt, and paste it here (input is hidden).")
-            user, usergroup, cookie = parse_callback(getpass.getpass("globalprotectcallback URL: "))
+            try:
+                user, usergroup, cookie = parse_callback(getpass.getpass("globalprotectcallback URL: "))
+            finally:
+                # The portal's login form, if saml_start wrote one: used up, so it does not stay on disk.
+                (SECRETS_DIR / "saml-login.html").unlink(missing_ok=True)
             var = "SAML_" + name.upper().replace("-", "_")
             env = {**os.environ, f"{var}_USER": user, f"{var}_ARGS": f"--usergroup={usergroup}"}
             lines = [cookie, cookie]  # GlobalProtect asks at the portal and again at the gateway
@@ -506,6 +531,7 @@ def main(argv):
                 sys.exit("the password must be one non-empty line")
             lines = [password, password]
             del password
+        claim_saml_port(systems, [name])
         rc = compose("up", "-d", "--build", GATEWAY)
         if not rc:
             # A login starts the container fresh: a new login pipe, no answers left from an earlier one.

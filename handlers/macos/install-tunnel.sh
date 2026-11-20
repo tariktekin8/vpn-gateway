@@ -1,7 +1,8 @@
 #!/bin/sh
-# Run the VPN Gateway WireGuard tunnel with wg-quick as a launchd service, so profile changes apply by themselves.
+# Run the VPN Gateway WireGuard tunnel as a launchd service, so profile changes apply by themselves.
 # Usage: sudo handlers/macos/install-tunnel.sh      (needs: brew install wireguard-tools)
-# Run it again when this checkout moves: the service holds the absolute path of data/wireguard/mac.conf.
+# Run it again when this checkout moves (the service holds the absolute path of data/wireguard/mac.conf) and after
+# brew upgrades wireguard-tools or wireguard-go (the service runs its own copies).
 set -eu
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -13,10 +14,19 @@ root="$(cd "$here/../.." && pwd)"
 profile="$root/data/wireguard/mac.conf"
 label="com.athenayazilim.vpn-gateway.tunnel"
 plist="/Library/LaunchDaemons/$label.plist"
-bin="/usr/local/libexec/vpn-gateway-tunnel"
+# Root runs everything in this folder, so it and its files belong to root and only root can change them.
+dir="/Library/PrivilegedHelperTools/vpn-gateway"
+bin="$dir/tunnel-service"
 
-if [ ! -x /opt/homebrew/bin/wg-quick ] && [ ! -x /usr/local/bin/wg-quick ]; then
-  echo "wg-quick not found. Install it first, as your user: brew install wireguard-tools" >&2
+tool() {
+  for p in /opt/homebrew/bin/$1 /usr/local/bin/$1; do
+    [ -x "$p" ] && { (cd "$(dirname "$p")" && realpath "$1"); return; }
+  done
+}
+wg=$(tool wg)
+wg_go=$(tool wireguard-go)
+if [ -z "$wg" ] || [ -z "$wg_go" ]; then
+  echo "wg or wireguard-go not found. Install them first, as your user: brew install wireguard-tools" >&2
   exit 1
 fi
 if [ ! -f "$profile" ]; then
@@ -33,9 +43,13 @@ if [ -f "$old_plist" ]; then
   echo "Removed the old VPN Hub tunnel service."
 fi
 
-# The service runs as root, so its script lives in a root-owned place, not in this (user-writable) checkout.
-mkdir -p /usr/local/libexec
+# The service runs as root, so it and the two programs it starts live in a root-owned folder, not in this checkout
+# or in Homebrew's folders, which your user can write. Both programs use only system libraries, so a copy works.
+install -d -o root -g wheel -m 755 "$dir"
 install -o root -g wheel -m 755 "$here/tunnel-service" "$bin"
+install -o root -g wheel -m 755 "$wg" "$dir/wg"
+install -o root -g wheel -m 755 "$wg_go" "$dir/wireguard-go"
+rm -f /usr/local/libexec/vpn-gateway-tunnel  # where older versions kept the script
 
 cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
