@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as the documentation says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never post real host names, addresses, user names, passwords, cookies, tokens or WireGuard keys.**
+        Replace them with made-up values, for example `vpn.example.com` and `10.20.0.15`.
+        A security problem goes to the [security policy](https://github.com/tariktekin8/vpn-gateway/security/policy), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: method
+    attributes:
+      label: Login method
+      options:
+        - gp-password
+        - gp-saml
+        - forti-saml
+        - Not about one VPN
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Computer
+      options:
+        - Mac (Apple silicon)
+        - Mac (Intel)
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: "`git log -1 --format=%h`"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: From the page's log or `./vpn logs <name>`, with hosts, addresses and names replaced.
+      render: text

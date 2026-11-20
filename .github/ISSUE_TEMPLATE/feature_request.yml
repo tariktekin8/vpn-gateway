@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest something new, for example another VPN client.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never post an organization's real host names or addresses.
+        A new VPN client must keep every rule in [Adding a VPN client](https://github.com/tariktekin8/vpn-gateway/blob/main/docs/adding-a-vpn-client.md).
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need
+      description: The problem you want solved, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
