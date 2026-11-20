@@ -733,6 +733,11 @@ the VPN is off, those names go to your normal DNS again.
 - GlobalProtect may ask for a device health report (HIP). VPN Gateway does not send one, so the organization's
   firewall may limit what you can reach; a policy that requires a managed device applies to you anyway (see
   [Before you start](#before-you-start)).
+- The images start from one fixed Debian image (`debian:bookworm-slim@sha256:...` in each `docker/*/Dockerfile`),
+  and openfortivpn is built from one fixed commit; the build stops if the tag points elsewhere. Debian packages
+  are installed at build time, so a rebuild takes their security updates. To see what an image holds:
+  `docker run --rm --entrypoint dpkg vpn-gateway -l`. To move to a newer Debian image, replace the digest with
+  the one `docker buildx imagetools inspect debian:bookworm-slim` shows.
 - Container logs show what the VPN clients print. VPN Gateway does not filter them. Check them before you share
   them.
 - Web page:
