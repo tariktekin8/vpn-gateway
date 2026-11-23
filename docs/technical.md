@@ -40,6 +40,7 @@ flowchart LR
 - [Things to keep in mind](#things-to-keep-in-mind)
 - [System files VPN Gateway changes](#system-files-vpn-gateway-changes)
 - [Stop or remove](#stop-or-remove)
+- [Update](#update)
 
 **Part 2: Reference**
 
@@ -311,6 +312,25 @@ The automatic tunnel also needs `wireguard-tools` from Homebrew (`brew install w
      ```
 
   4. Delete the `vpn-gateway` folder. Its `data/` folder holds your settings and WireGuard keys; it is deleted with it.
+
+## Update
+
+When a new version is out, `./vpn web` prints a line about it and the page shows **A new version is out**. VPN
+Gateway never updates itself: you choose when.
+
+- To get an e-mail for each new version, open the [project on GitHub](https://github.com/tariktekin8/vpn-gateway),
+  choose **Watch**, **Custom** and tick **Releases**.
+- To update:
+  1. Read the new version in the [changelog](../CHANGELOG.md). If it has an **Upgrading** part, follow it.
+  2. Stop `./vpn web` with Ctrl-C.
+  3. In the `vpn-gateway` folder, run `git pull`. Your `data/` folder is not changed.
+  4. Start `./vpn web` again (`.\vpn.cmd web` on Windows).
+  5. Disconnect and connect each VPN once. The new images are built then.
+- To turn the check off, set the environment variable `VPN_GATEWAY_NO_UPDATE_CHECK=1` before `./vpn web`.
+
+The check runs once at each start of `./vpn web`. It asks GitHub for the newest release of this project
+(`api.github.com`) and compares it with the newest version tag in your folder. The request holds no data of yours;
+GitHub sees your public IP address, as with any web page.
 
 ---
 
@@ -762,6 +782,8 @@ answers "no such name", so they do not leak to your normal DNS either. If the ga
 waits about 30 seconds and then fails.
 
 - VPN Gateway listens on `127.0.0.1` only: the WireGuard port, the FortiGate SAML port and the web page.
+- The update check only reads the newest release's version from GitHub. The version must look like `v1.2.3`, and
+  the page links only to this project's release page. Nothing is downloaded or run; `git pull` stays your step.
 - Passwords and SAML cookies are never stored. The page (or `./vpn login`) asks for the password at every connect.
   The server keeps it in memory only until it sends it, together with a SAML cookie or an MFA code, into the VPN
   container: through `docker exec -i` into a pipe (FIFO) in a memory-only folder (`/run/vpn`, tmpfs). It never

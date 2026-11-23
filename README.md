@@ -72,6 +72,12 @@ Details: [Security notes](docs/technical.md#security-notes).
    key. Press **Start the gateway**, import the WireGuard profile and add your VPNs:
    [First setup on the page](docs/technical.md#first-setup-on-the-page).
 
+## Update
+
+When a new version is out, `./vpn web` and the page tell you. Stop `./vpn web`, run `git pull` and start it again:
+[Update](docs/technical.md#update). Read the [changelog](CHANGELOG.md) first. To get an e-mail for each new version,
+choose **Watch**, **Custom**, **Releases** on GitHub.
+
 ## Documentation
 
 Everything is in the [documentation](docs/technical.md):

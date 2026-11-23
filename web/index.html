@@ -41,6 +41,11 @@
         <span><strong>data/systems.json has a problem.</strong> Fix the file by hand; saving is refused until then.
           <code id="banner-file-text" class="block"></code></span>
       </div>
+      <div id="banner-update" class="banner warn" role="status" hidden>
+        <span>A new version is out: <strong id="banner-update-version"></strong>.
+          <a id="banner-update-link" href="#" target="_blank" rel="noopener noreferrer">What changed</a>.
+          To update, stop <code>./vpn web</code>, run <code>git pull</code> and start it again.</span>
+      </div>
       <div id="banner-load" class="banner warn" role="alert" hidden>
         <span id="banner-load-text"></span>
       </div>

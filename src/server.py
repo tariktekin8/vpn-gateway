@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
@@ -51,6 +52,10 @@ TUNNEL_SERVICE = Path("/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunn
 SAML_PAGE_TTL = 300  # seconds a one-time /saml/<nonce> page lives
 GATEWAY = cli.GATEWAY
 AUTH_RE = re.compile(r"Authenticate at\s+(\S+)")
+RELEASES_API = "https://api.github.com/repos/tariktekin8/vpn-gateway/releases/latest"
+RELEASE_PAGE = "https://github.com/tariktekin8/vpn-gateway/releases/tag/"
+VERSION_RE = re.compile(r"v(\d{1,4})\.(\d{1,4})\.(\d{1,4})")
+NO_UPDATE_CHECK = "VPN_GATEWAY_NO_UPDATE_CHECK"
 COMMON_HEADERS = [
     ("Cache-Control", "no-store"),
     ("X-Content-Type-Options", "nosniff"),
@@ -327,6 +332,39 @@ def forti_auth_url(log_text, host):
     return url if same else None
 
 
+def installed_version():
+    """The newest version tag in this clone, or None (no git, no tags, a zip download)."""
+    try:
+        r = subprocess.run(["git", "-C", str(cli.ROOT), "describe", "--tags", "--abbrev=0", "--match", "v*"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tag = r.stdout.strip()
+    return tag if r.returncode == 0 and VERSION_RE.fullmatch(tag) else None
+
+
+def latest_release(opener=urllib.request.urlopen):
+    """The tag of the newest GitHub release, or None. Sends nothing about this computer but the request itself."""
+    req = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json",
+                                                        "User-Agent": "vpn-gateway"})
+    try:
+        with opener(req, timeout=10) as r:
+            tag = json.loads(r.read(65536)).get("tag_name")
+    except Exception:  # offline, rate limit, bad JSON: no notice
+        return None
+    return tag if isinstance(tag, str) and VERSION_RE.fullmatch(tag) else None
+
+
+def newer_release(installed, latest):
+    """{"installed", "latest", "url"} when latest is a higher version than installed, else None."""
+    if not installed or not latest:
+        return None
+    nums = lambda tag: tuple(int(n) for n in VERSION_RE.fullmatch(tag).groups())
+    if nums(latest) <= nums(installed):
+        return None
+    return {"installed": installed, "latest": latest, "url": RELEASE_PAGE + latest}
+
+
 class App:
     def __init__(self, port, token, docker=None, handler_token=None):
         self.token = token
@@ -339,7 +377,15 @@ class App:
         self.saml_pages = {}  # nonce -> (html bytes, expiry, system name); memory only, one use
         self.clock = time.monotonic
         self.threads = []
+        self.new_release = None  # set by check_update when a newer release exists
         self.set_port(port)
+
+    def check_update(self):
+        """Look once for a newer release. Only tells the user; it never downloads or changes anything."""
+        self.new_release = newer_release(installed_version(), latest_release())
+        if self.new_release:
+            print(f"A new version of VPN Gateway is out: {self.new_release['latest']} (you have "
+                  f"{self.new_release['installed']}). What changed: {self.new_release['url']}", flush=True)
 
     def set_port(self, port):
         self.port = port
@@ -981,7 +1027,7 @@ class App:
             out["systems"][name] = {"method": s["method"], "state": state, "iface": iface, "tunnel_up": up,
                                     "routes": routes, "busy": op.get("busy"), "error": op.get("error"),
                                     "login": login, "dns": dns}
-        out = {"docker": docker_ok[0], **out}
+        out = {"docker": docker_ok[0], **out, "update": self.new_release}
         return respond(200, out)
 
     def logs_system(self, name, query):
@@ -1094,6 +1140,8 @@ def main(argv):
         print(f"VPN Gateway web app (this link is the key; a new one at every start; Ctrl-C stops it):\n{link}",
               flush=True)
         webbrowser.open(link)
+        if not os.environ.get(NO_UPDATE_CHECK):
+            threading.Thread(target=app.check_update, daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass

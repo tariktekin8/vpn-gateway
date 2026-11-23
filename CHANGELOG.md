@@ -4,7 +4,8 @@ What each version of VPN Gateway added or changed. The newest version is on top.
 
 Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. MAJOR changes when an upgrade
 needs you to do something (the version has an "Upgrading" part), MINOR adds features that keep working as before,
-and PATCH only fixes bugs. Each version is a git tag, for example `v2.0.0`.
+and PATCH only fixes bugs. Each version is a git tag, for example `v2.0.0`, and a GitHub release with the same
+text as here.
 
 ## Unreleased
 
@@ -55,6 +56,9 @@ Nothing yet.
 
 - Security sections in `README.md` and `docs/technical.md`: what VPN Gateway gives you and what it cannot give you.
 - `docs/adding-a-vpn-client.md`: the security checklist for a new VPN client or login method.
+- **Update notice.** At each start, `./vpn web` asks GitHub for the newest release. When it is newer than your
+  version, the terminal and the page say so, with a link to what changed. Nothing is updated by itself: you run
+  `git pull`. `VPN_GATEWAY_NO_UPDATE_CHECK=1` turns the check off.
 
 ### Fixed
 

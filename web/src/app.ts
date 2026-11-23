@@ -56,6 +56,7 @@ interface Status {
   docker: boolean;
   gateway: GatewayStatus;
   systems: Record<string, SystemStatus>;
+  update: { installed: string; latest: string; url: string } | null;
 }
 
 interface RouteEntry {
@@ -1627,6 +1628,16 @@ async function loadSystems(): Promise<void> {
   renderSystems();
 }
 
+// Only https links to this project's release pages; anything else hides the notice.
+function showUpdate(update: Status["update"]): void {
+  const ok = Boolean(update && update.url.startsWith("https://github.com/tariktekin8/vpn-gateway/releases/tag/"));
+  if (update && ok) {
+    setText($("banner-update-version"), update.latest + " (you have " + update.installed + ")");
+    ($("banner-update-link") as HTMLAnchorElement).href = update.url;
+  }
+  show($("banner-update"), ok);
+}
+
 async function loadStatus(): Promise<void> {
   const seq = ++statusReqSeq;
   const r = await api<Status>("GET", "/api/status");
@@ -1634,6 +1645,7 @@ async function loadStatus(): Promise<void> {
     setLoadError("status", null);
     lastStatus = r.data as Status;
     lastStatusSeq = Math.max(lastStatusSeq, seq);
+    showUpdate(lastStatus.update);
     render();
   } else if (r.status !== 0 && r.status !== 403) {
     setLoadError("status", "Could not load the status: " + (r.data.error || "HTTP " + r.status) + ".");
