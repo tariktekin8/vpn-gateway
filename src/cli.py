@@ -584,7 +584,8 @@ def main(argv):
                                     capture_output=True).returncode == 0
                 tunnel = f"{iface} up" if up else f"{iface} down"
                 if up:
-                    shared = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "cat", f"/state/{name}/{name}.routes"],
+                    shared = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "find", f"/state/{name}/{name}.routes",
+                                             "-maxdepth", "0", "-type", "f", "-exec", "cat", "{}", ";"],  # no symlinks
                                             capture_output=True, text=True)
                     count = len(shared.stdout.split()) if shared.returncode == 0 else 0
                     tunnel += f", {count} routes to Mac" if count else f", no routes to Mac: run ./vpn login {name}"

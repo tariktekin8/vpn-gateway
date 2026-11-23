@@ -49,12 +49,13 @@ Nothing yet.
 - **Sign-in links are checked.** The FortiGate "Authenticate at" link opens only if it is `https://` on the VPN's
   own host and port. A `gp-saml` callback is refused if its cookie or user name holds a line break or other control
   characters.
-- The gateway and the page never read a VPN's state file through a symlink. `./vpn login` deletes the portal's
+- The gateway, the page and `./vpn status` never read a VPN's state file through a symlink. `./vpn login` deletes the portal's
   login form from `data/secrets/` once the login is done.
 
 ### Added
 
 - Security sections in `README.md` and `docs/technical.md`: what VPN Gateway gives you and what it cannot give you.
+- Setup flowcharts for Mac and Windows in `docs/technical.md`. `README.md` is now a short summary.
 - `docs/adding-a-vpn-client.md`: the security checklist for a new VPN client or login method.
 - **Update notice.** At each start, `./vpn web` asks GitHub for the newest release. When it is newer than your
   version, the terminal and the page say so, with a link to what changed. Nothing is updated by itself: you run

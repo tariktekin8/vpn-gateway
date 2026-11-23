@@ -3,62 +3,31 @@
 **All your organization VPNs, open at the same time, on your own computer.**
 
 Consultants, freelancers and support teams often need the internal networks of several organizations in one day.
-Each one hands out its own VPN, and you can be connected to only one at a time. VPN Gateway ends the switching: it
-keeps every VPN connection open side by side, and one page in your browser shows them all.
+Each one hands out its own VPN, and you can be connected to only one at a time. VPN Gateway keeps every VPN open
+side by side, and one page in your browser shows them all.
 
 ![VPN Gateway web page: gateway details on top, the VPN list on the left, a connected VPN and its addresses on the right](docs/images/web.png)
 
 *The names, hosts and addresses in this picture are made up.*
 
-## What it does for you
+## What it does
 
-- **Several VPNs at once.** Palo Alto GlobalProtect and Fortinet FortiGate, with a password or a single sign-on
-  page (Microsoft, Okta, …). Connect them all and reach every network at the same time.
-- **One page for everything.** Connect, sign in, add a VPN, change its addresses: no config files, no terminal
-  after the start.
-- **Only what you choose goes through a VPN.** You list the addresses for each VPN; everything else, including your
-  normal internet, stays as it is.
-- **See at a glance what works.** Each address shows three green stops, from your computer through the gateway into
-  the VPN. A stop that turns amber tells you what is wrong.
-- **Changes apply at once.** Add or remove an address while a VPN is connected; the session stays up.
-- **Two VPNs with the same addresses.** Map one of them to another range and reach both.
-- **Stays on your computer.** Settings stay in one folder on your computer. Passwords are asked at every connect
-  and never stored. Nothing goes to a cloud service.
-- **Mac and Windows.** Runs on Docker Desktop and WireGuard, both free.
+- **Several VPNs at once:** Palo Alto GlobalProtect and Fortinet FortiGate, with a password or a single sign-on page.
+- **One page for everything:** connect, sign in, add a VPN and change its addresses, with no config files.
+- **Only what you choose goes through a VPN:** you list the addresses; your normal internet stays as it is.
+- **See what works:** each address shows three stops, from your computer through the gateway into the VPN.
+- **Mac and Windows:** runs on Docker Desktop and WireGuard, both free. Nothing goes to a cloud service.
 
 ## Before you start
 
 > [!IMPORTANT]
-> Use VPN Gateway only for networks you are allowed to use. Check each organization's rules first:
->
-> - Some organizations allow no VPN app other than their own.
-> - Some require a managed device or a device health check (GlobalProtect HIP); VPN Gateway does not send one.
-> - Some contracts forbid being connected to other networks at the same time.
->
-> If you are not sure, ask their IT team.
-
-## Security
-
-What VPN Gateway gives you:
-
-- Each organization's VPN runs apart from the others. One organization cannot reach another, and none can open a
-  connection to your computer.
-- Only the addresses you list go through a VPN. Your normal internet and your default DNS stay as they are.
-- Passwords are asked at every connect and never stored. Passwords and login cookies never reach a file or a log.
-- The page works only on your computer, and only with the link that `./vpn web` prints.
-- On a Mac, an organization's internal names go only to that organization, and only after you allow them.
-
-What it cannot give you:
-
-- Protection for a compromised computer: it reaches every connected organization at once.
-- Permission from an organization, a device health report (GlobalProtect HIP) or a managed device.
-- The organization's own filters for the rest of your internet traffic.
-
-Details: [Security notes](docs/technical.md#security-notes).
+> Use VPN Gateway only for networks you are allowed to use. Some organizations allow no other VPN app, require a
+> managed device or a device health check (GlobalProtect HIP), or forbid other connections at the same time. If you
+> are not sure, ask their IT team.
 
 ## Get started
 
-1. Install **Docker Desktop**, **WireGuard**, **Git** and **Python**: [What you need](docs/technical.md#what-you-need).
+1. Install **Docker Desktop**, **WireGuard**, **Git** and **Python**.
 2. Download VPN Gateway and start the page:
 
    ```sh
@@ -67,35 +36,32 @@ Details: [Security notes](docs/technical.md#security-notes).
    ./vpn web
    ```
 
-   On Windows, run `.\vpn.cmd web` instead: [Install (Windows)](docs/technical.md#install-windows).
-3. The page opens in your browser. If it does not, open the link that `./vpn web` printed; it holds the page's
-   key. Press **Start the gateway**, import the WireGuard profile and add your VPNs:
-   [First setup on the page](docs/technical.md#first-setup-on-the-page).
+   On Windows, run `.\vpn.cmd web`.
+3. On the page, press **Start the gateway**, connect the WireGuard tunnel, add your VPNs and press **Connect**.
+
+Step by step, with a flowchart for each system: [Setup on a Mac](docs/technical.md#setup-on-a-mac) and
+[Setup on Windows](docs/technical.md#setup-on-windows).
+
+## Security
+
+- Each organization's VPN runs apart; none can reach another or open a connection to your computer.
+- Passwords are asked at every connect and never stored. Passwords and login cookies never reach a file or a log.
+- The page works only on your computer, and only with the link that `./vpn web` prints.
+- It cannot protect a compromised computer, which reaches every connected organization at once.
+
+Details: [Security notes](docs/technical.md#security-notes).
 
 ## Update
 
-When a new version is out, `./vpn web` and the page tell you. Stop `./vpn web`, run `git pull` and start it again:
-[Update](docs/technical.md#update). Read the [changelog](CHANGELOG.md) first. To get an e-mail for each new version,
-choose **Watch**, **Custom**, **Releases** on GitHub.
+`./vpn web` and the page tell you when a new version is out. Read the [changelog](CHANGELOG.md), stop `./vpn web`,
+run `git pull` and start it again: [Update](docs/technical.md#update).
 
 ## Documentation
 
-Everything is in the [documentation](docs/technical.md):
-
-- [Install on a Mac](docs/technical.md#install-mac) or [on Windows](docs/technical.md#install-windows): step by
-  step, for people who have never used a terminal.
-- [First setup](docs/technical.md#first-setup-on-the-page) and [what to fill in](docs/technical.md#what-to-fill-in)
-  for each VPN.
-- [Every day](docs/technical.md#every-day): connect, sign in, check and change addresses.
-- [Reaching servers by name](docs/technical.md#reaching-servers-by-name): DNS for the VPN networks.
-- [Things to keep in mind](docs/technical.md#things-to-keep-in-mind) while you use it.
-- [System files VPN Gateway changes](docs/technical.md#system-files-vpn-gateway-changes) on Mac and Windows, and
-  how to remove them.
-- [Stop or remove](docs/technical.md#stop-or-remove) VPN Gateway.
-- [Command line](docs/technical.md#everyday-commands), [configuration file](docs/technical.md#configure-your-vpns-systemsjson),
-  [how it works](docs/technical.md#how-it-works) and [security notes](docs/technical.md#security-notes).
-- [Adding a VPN client](docs/adding-a-vpn-client.md): the security rules a new login method must keep.
+- [Documentation](docs/technical.md): setup, everyday use, names (DNS), command line, how it works, security.
 - [Changelog](CHANGELOG.md): what each version added.
+- [Contributing](CONTRIBUTING.md) and [Adding a VPN client](docs/adding-a-vpn-client.md).
+- [Security policy](SECURITY.md): how to report a vulnerability.
 
 ## License
 

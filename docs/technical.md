@@ -5,7 +5,7 @@ configuration file, and how it works inside. The [README](../README.md) is the s
 
 ```mermaid
 flowchart LR
-    pc["Your computer<br/>WireGuard app<br/>10.200.0.2"] -->|"UDP 127.0.0.1:51820"| gw
+    pc["Your computer<br/>WireGuard<br/>10.200.0.2"] -->|"UDP 127.0.0.1:51820"| gw
     subgraph docker["Docker Desktop"]
         gw["gateway<br/>WireGuard server<br/>10.200.0.1"]
         a["VPN container A<br/>GlobalProtect"]
@@ -32,9 +32,9 @@ flowchart LR
 - [Before you start](#before-you-start)
 - [Supported VPNs](#supported-vpns)
 - [What you need](#what-you-need)
-- [Install (Mac)](#install-mac)
-- [Install (Windows)](#install-windows)
-- [First setup on the page](#first-setup-on-the-page)
+- [Setup on a Mac](#setup-on-a-mac)
+- [Setup on Windows](#setup-on-windows)
+- [What to fill in](#what-to-fill-in)
 - [Every day](#every-day)
 - [Reaching servers by name](#reaching-servers-by-name)
 - [Things to keep in mind](#things-to-keep-in-mind)
@@ -105,67 +105,176 @@ More about the requirements:
 - Only for the [sign-in helper on a Mac](#sign-in-helper-mac): the Xcode Command Line Tools
   (`xcode-select --install`).
 
-## Install (Mac)
+## Setup on a Mac
 
-Open the **Terminal** app (press Cmd-Space, type "Terminal", press Enter). Copy each line below, paste it into
-Terminal, and press Enter.
+```mermaid
+flowchart TD
+    start(["Start"]) --> docker["Install Docker Desktop<br/>open it once, wait until it is running"]
+    docker --> wg["Install WireGuard<br/>from the Mac App Store"]
+    wg --> git{"git --version<br/>works in Terminal?"}
+    git -->|"No"| clt["Accept the developer tools install<br/>it also installs Python 3"]
+    git -->|"Yes"| clone
+    clt --> clone["git clone https://github.com/tariktekin8/vpn-gateway.git<br/>cd vpn-gateway"]
+    clone --> web["./vpn web<br/>creates data/, the WireGuard keys and the compose file<br/>prints a one-time link and opens it"]
+    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes"]
+    gw --> tunnel{"How should the<br/>tunnel run?"}
+    tunnel -->|"Automatic tunnel (recommended)"| brew["brew install wireguard-tools<br/>sudo handlers/macos/install-tunnel.sh"]
+    brew --> off["Turn off every vpn-gateway tunnel<br/>in the WireGuard app"]
+    tunnel -->|"WireGuard app"| import["Page: Download profile<br/>WireGuard app: Import tunnel(s) from file, Activate"]
+    off --> add
+    import --> add["Page: Add VPN<br/>name, method, host, subnets"]
+    add --> method{"Method"}
+    method -->|"gp-saml"| helper["Optional, once: handlers/macos/install.sh<br/>the sign-in helper catches the callback link"]
+    method -->|"gp-password or forti-saml"| connect
+    helper --> connect["Page: Connect<br/>first time: builds the VPN image"]
+    connect --> login{"Sign in"}
+    login -->|"gp-password"| pass["Type the password<br/>approve MFA or type the code"]
+    login -->|"gp-saml or forti-saml"| sso["Sign in on the pop-up page"]
+    pass --> green
+    sso --> green["Green dot: connected<br/>Addresses tab: three green stops"]
+    green --> names{"Reach servers<br/>by name?"}
+    names -->|"No"| done(["Done"])
+    names -->|"Yes"| allow["Names tab: Use next to each domain<br/>Add to Addresses next to the DNS server"]
+    allow --> auto{"Automatic tunnel?"}
+    auto -->|"Yes"| resolver["/etc/resolver files are written<br/>within 5 seconds"]
+    auto -->|"No"| byhand["Write /etc/resolver/DOMAIN by hand"]
+    resolver --> done
+    byhand --> done
+```
 
-1. If you have never used Git on this Mac, type `git --version` and press Enter. If the Mac offers to install the
-   developer tools, accept and wait until they are installed. This also installs Python.
+Open the **Terminal** app (press Cmd-Space, type "Terminal", press Enter). Copy each command, paste it into
+Terminal and press Enter.
 
-2. Download VPN Gateway:
+### 1. Install the tools
 
-   ```sh
-   git clone https://github.com/tariktekin8/vpn-gateway.git
-   cd vpn-gateway
-   ```
+1. Install **Docker Desktop** from <https://www.docker.com/products/docker-desktop/>. Open it once and wait until
+   it says it is running.
+2. Install **WireGuard** from the [Mac App Store](https://apps.apple.com/app/wireguard/id1451685025).
+3. Type `git --version`. If the Mac offers to install the developer tools, accept and wait. This also installs
+   Python 3.
 
-3. Start VPN Gateway:
+### 2. Download and start VPN Gateway
 
-   ```sh
-   ./vpn web
-   ```
+```sh
+git clone https://github.com/tariktekin8/vpn-gateway.git
+cd vpn-gateway
+./vpn web
+```
 
-4. Your browser opens the VPN Gateway page. If it does not, open the link that `./vpn web` printed
-   (`http://127.0.0.1:8765/#token=...`). The link holds the page's key and changes at every start.
+`./vpn web` creates the `data/` folder, the WireGuard keys and the compose file, prints the page's link
+(`http://127.0.0.1:8765/#token=...`) and opens it in your browser. The link holds the page's key and changes at
+every start. Keep Terminal open while you use the page; Ctrl-C stops the page, and your VPN connections keep running.
 
-Keep the Terminal window open while you use the page. To stop the page, press Ctrl-C in Terminal. Your VPN
-connections keep running.
+### 3. Start the gateway and connect the tunnel
 
-To check that the tools work, run `docker compose version`, `python3 --version` and `./vpn --help`.
+1. On the page, press **Start the gateway**. The first time builds the gateway image and takes a few minutes.
+2. Connect your computer to the gateway in one of two ways. Use only one of them: two clients with the same key
+   break each other.
+   - **Automatic tunnel (recommended).** A system service runs the tunnel, applies address changes by itself and
+     writes the DNS files for your VPNs. It needs [Homebrew](https://brew.sh):
 
-**Next time**, you only need steps 3 and 4, from the `vpn-gateway` folder:
+     ```sh
+     brew install wireguard-tools
+     sudo handlers/macos/install-tunnel.sh
+     ```
+
+     Then turn off every `vpn-gateway` tunnel in the WireGuard app. See [Automatic tunnel (Mac)](#automatic-tunnel-mac).
+   - **WireGuard app.** Press **Download profile** (under **Advanced** or in the gateway's **Details**). In the
+     WireGuard app, choose **Import tunnel(s) from file**, pick `vpn-gateway.conf` and activate it. Import it again
+     whenever the page says **Your WireGuard profile changed**.
+
+### 4. Add and connect your VPNs
+
+1. Press **Add VPN** and fill in the form: [What to fill in](#what-to-fill-in).
+2. For `gp-saml` VPNs, install the [sign-in helper (Mac)](#sign-in-helper-mac) once, so the login finishes by itself.
+3. Press **Connect**. The first connect of each method builds its VPN image. Then sign in: see [Every day](#every-day).
+
+### 5. Reach servers by name (optional)
+
+Open the VPN's **Names** tab, press **Use** next to each of the organization's domains and **Add to Addresses**
+next to its DNS server. With the automatic tunnel, names then work by themselves; without it, write the resolver
+files by hand. See [Reaching servers by name](#reaching-servers-by-name).
+
+**Next time**, only start the page:
 
 ```sh
 cd vpn-gateway
 ./vpn web
 ```
 
-## Install (Windows)
+## Setup on Windows
 
-1. Install the four programs from [What you need](#what-you-need):
-   - **Docker Desktop**: keep the default **WSL 2** option. Restart the PC if it asks. Open Docker Desktop once.
-   - **WireGuard for Windows**.
-   - **Python**: on the first screen of the installer, tick **Add python.exe to PATH** and keep **py launcher**
-     selected.
-   - **Git for Windows**: the default options are fine. The repository's `.gitattributes` keeps the container
-     scripts in Unix line endings, so they run.
-2. Open **PowerShell**: press the Windows key, type "PowerShell", press Enter.
-3. Copy each line below, paste it into PowerShell (right-click pastes), and press Enter:
+```mermaid
+flowchart TD
+    start(["Start"]) --> docker["Install Docker Desktop<br/>keep WSL 2, restart if asked, open it once"]
+    docker --> wg["Install WireGuard for Windows"]
+    wg --> py["Install Python<br/>tick Add python.exe to PATH"]
+    py --> git["Install Git for Windows<br/>default options"]
+    git --> clone["PowerShell: cd $HOME<br/>git clone https://github.com/tariktekin8/vpn-gateway.git<br/>cd vpn-gateway"]
+    clone --> web[".\vpn.cmd web<br/>creates data\, the WireGuard keys and the compose file<br/>prints a one-time link and opens it"]
+    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes"]
+    gw --> import["Page: Download profile<br/>WireGuard: Import tunnel(s) from file, Activate"]
+    import --> add["Page: Add VPN<br/>name, method, host, subnets"]
+    add --> method{"Method"}
+    method -->|"gp-saml"| helper["Optional, once: handlers\windows\install.ps1<br/>the sign-in helper catches the callback link"]
+    method -->|"gp-password or forti-saml"| connect
+    helper --> connect["Page: Connect<br/>first time: builds the VPN image"]
+    connect --> login{"Sign in"}
+    login -->|"gp-password"| pass["Type the password<br/>approve MFA or type the code"]
+    login -->|"gp-saml or forti-saml"| sso["Sign in on the pop-up page"]
+    pass --> green
+    sso --> green["Green dot: connected<br/>Addresses tab: three green stops"]
+    green --> names{"Reach servers<br/>by name?"}
+    names -->|"No"| done(["Done"])
+    names -->|"Yes"| allow["Names tab: Add to Addresses<br/>next to the DNS server"]
+    allow --> nrpt["PowerShell as administrator:<br/>Add-DnsClientNrptRule for each domain"]
+    nrpt --> done
+    done -.->|"Later you change addresses"| again["Page says Your WireGuard profile changed:<br/>Download profile, import it again"]
+```
 
-   ```powershell
-   cd $HOME
-   git clone https://github.com/tariktekin8/vpn-gateway.git
-   cd vpn-gateway
-   .\vpn.cmd web
-   ```
+### 1. Install the tools
 
-   The folder must stay inside your user folder (`C:\Users\<you>\vpn-gateway`): Windows keeps it private to you
-   there. Do not move it to a shared folder.
-4. Your browser opens the VPN Gateway page. If it does not, open the link that `./vpn web` printed
-   (`http://127.0.0.1:8765/#token=...`). The link holds the page's key and changes at every start.
+1. **Docker Desktop** from <https://www.docker.com/products/docker-desktop/>: keep the default **WSL 2** option.
+   Restart the PC if it asks. Open Docker Desktop once and wait until it is running.
+2. **WireGuard for Windows** from <https://www.wireguard.com/install/>.
+3. **Python** from <https://www.python.org/downloads/windows/>: on the first screen, tick **Add python.exe to PATH**
+   and keep **py launcher** selected.
+4. **Git for Windows** from <https://git-scm.com/download/win>: the default options are fine. The repository's
+   `.gitattributes` keeps the container scripts in Unix line endings, so they run.
 
-Keep the PowerShell window open while you use the page. To stop the page, press Ctrl-C in PowerShell.
+### 2. Download and start VPN Gateway
+
+Open **PowerShell** (press the Windows key, type "PowerShell", press Enter). Paste each line (right-click pastes)
+and press Enter:
+
+```powershell
+cd $HOME
+git clone https://github.com/tariktekin8/vpn-gateway.git
+cd vpn-gateway
+.\vpn.cmd web
+```
+
+The folder must stay inside your user folder (`C:\Users\<you>\vpn-gateway`): Windows keeps it private to you there.
+Do not move it to a shared folder. The page opens in your browser; if it does not, open the link the command
+printed. Keep PowerShell open while you use the page; Ctrl-C stops it.
+
+### 3. Start the gateway and connect the tunnel
+
+1. On the page, press **Start the gateway**. The first time takes a few minutes.
+2. Press **Download profile** (under **Advanced** or in the gateway's **Details**). In WireGuard, choose
+   **Import tunnel(s) from file**, pick `vpn-gateway.conf` and activate it.
+3. Import it again whenever the page says **Your WireGuard profile changed** (after you change a VPN's addresses).
+
+### 4. Add and connect your VPNs
+
+1. Press **Add VPN** and fill in the form: [What to fill in](#what-to-fill-in).
+2. For `gp-saml` VPNs, install the [sign-in helper (Windows)](#sign-in-helper-windows) once.
+3. Press **Connect** and sign in: see [Every day](#every-day).
+
+### 5. Reach servers by name (optional)
+
+Press **Add to Addresses** next to the VPN's DNS server in its **Names** tab, then add an NRPT rule for each domain
+as administrator. See [Reaching servers by name](#reaching-servers-by-name).
 
 **Next time**, open PowerShell and run:
 
@@ -174,19 +283,10 @@ cd $HOME\vpn-gateway
 .\vpn.cmd web
 ```
 
-## First setup on the page
+## What to fill in
 
-Nothing to configure by hand: VPN Gateway creates its `data/` folder, the compose file and the WireGuard keys
-itself. The command line does the same work; see [First start (command line)](#first-start-command-line).
-
-1. Press **Start the gateway**. The first time takes a few minutes.
-2. Press **Download profile**. Open the WireGuard app, choose **Import tunnel(s) from file**, pick the downloaded
-   `vpn-gateway.conf` and turn it on. Your computer is now connected to VPN Gateway.
-3. Press **Add VPN** and fill in one VPN (see below). Repeat for each VPN.
-
-### What to fill in
-
-Ask the IT team that gave you the VPN, or look at the settings of the VPN app they gave you.
+Ask the IT team that gave you the VPN, or look at the settings of the VPN app they gave you. VPN Gateway writes your
+answers to `data/systems.json`; nothing else needs to be configured by hand.
 
 | Field | What to write |
 |---|---|
@@ -222,9 +322,9 @@ must all be green: **local** sends it into the tunnel, the **gateway** sends it 
 VPN sessions end after some hours, as the organization sets them. When a VPN's dot is no longer green, press
 **Connect** again.
 
-When the top strip says **Your WireGuard profile changed**, press **Download profile** and import it again in
-WireGuard (it asks to replace the old one). This only happens when you change the addresses of a VPN. On a
-Mac you can make this automatic: see [Automatic tunnel (Mac)](#automatic-tunnel-mac).
+Without the automatic tunnel, the top strip says **Your WireGuard profile changed** after you change a VPN's
+addresses. Press **Download profile** and import it again in WireGuard (it asks to replace the old one). On a Mac
+the [automatic tunnel](#automatic-tunnel-mac) does this for you.
 
 ## Reaching servers by name
 
@@ -268,7 +368,7 @@ On a Mac, names that end in `.local` go to Bonjour (mDNS) first. Reach those ser
 
 - Keep Terminal (PowerShell on Windows) open with `vpn web` running while you use the page.
 - Docker Desktop must be running.
-- The tunnel must be on in the WireGuard app. To refresh it, turn it off and on.
+- The tunnel must be on: in the WireGuard app (turn it off and on to refresh it), or the automatic tunnel on a Mac.
 - Allow pop-ups for the page: sign-in windows open as pop-ups.
 - Ports 51820 (UDP) and 8020 (TCP) on `127.0.0.1` must be free: quit the official FortiClient and other WireGuard
   tunnels first.
@@ -672,14 +772,15 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 ├── vpn                        launcher: ./vpn <command>, ./vpn web (vpn.cmd on Windows)
 ├── src/
 │   ├── cli.py                 command line (Python, standard library only)
-│   └── server.py              web API, reuses the command line's code
+│   └── server.py              web page server and API, reuses the command line's code
 ├── web/                       web page: index.html, style.css, app.js (built from web/src/app.ts)
 ├── package.json, tsconfig.json  TypeScript build for the web page only
 ├── docker/
-│   ├── gateway/               WireGuard gateway image
+│   ├── gateway/               WireGuard gateway image (dnsmasq, saml-forward.sh for the FortiGate port)
 │   ├── openconnect/           GlobalProtect client image
 │   ├── openfortivpn/          FortiGate client image
-│   └── common/hub-link.sh     shares a tunnel's routes and DNS with the gateway
+│   └── common/                hub-link.sh shares a tunnel's routes and DNS with the gateway;
+│                              hide-cookies.sh hides login cookies in the logs
 ├── handlers/
 │   ├── macos/                 sign-in helper for macOS (Swift), automatic tunnel, install scripts
 │   └── windows/               sign-in helper for Windows (Python) and its install scripts
@@ -687,8 +788,9 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 └── data/                      created by VPN Gateway (or you); git-ignored
     ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
-    ├── secrets/               sign-in helper token while vpn web runs; SAML login page from ./vpn login
-    └── wireguard/             WireGuard keys, mac.conf, static-routes, route-owners, port-limits, dns-owners, dns
+    ├── secrets/               web-handler.json while vpn web runs; the portal's login form during ./vpn login
+    └── wireguard/             server.key, mac.key, mac.conf, static-routes, route-owners, port-limits,
+                               dns-owners, dns, saml-target
 ```
 
 ## Troubleshooting
@@ -852,8 +954,9 @@ Gateway needs no Node. After you change the TypeScript, rebuild with Node 18 or 
 
 ```sh
 npm install        # once: installs the pinned TypeScript compiler
+npm run check      # type check
 npm run build      # writes web/app.js
 ```
 
-The tests use temporary folders and a fake Docker. They never run Docker or touch your real files.
-One socket test is skipped when the environment does not allow binding a local port.
+Before a change is merged, follow [CONTRIBUTING.md](../CONTRIBUTING.md). A new VPN client or login method must
+keep every rule in [Adding a VPN client](adding-a-vpn-client.md).

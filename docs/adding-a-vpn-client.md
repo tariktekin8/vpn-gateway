@@ -26,7 +26,8 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       `INPUT` chain drops such connections, and its `FORWARD` chain drops everything except WireGuard to the listed
       subnets.
 - [ ] The container writes only under its own `/state/`. The gateway reads it read-only at `/state/<name>/` and
-      trusts the folder name, not the file content, to know whose data it is.
+      trusts the folder name, not the file content, to know whose data it is. The gateway, the page and
+      `./vpn status` read those files only as regular files, never through a symlink; keep it that way.
 - [ ] A subnet the container publishes is used only if `systems.json` lists it for that system
       (`data/wireguard/route-owners`). Do not bypass that check.
 - [ ] Only `cap_add: NET_ADMIN` and the devices the client needs (`/dev/net/tun`, `/dev/ppp`). No `privileged`.
@@ -102,7 +103,7 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 
 - [ ] Unit tests for the new method: `render()` output (own network, own volume, no secret, tmpfs if it uses the
       pipe), validation of its required fields, and the login flow through the pipe.
-- [ ] `python3 -m unittest discover -s tests` passes, and the image builds on Mac (amd64 and arm64).
+- [ ] The image builds on Mac (amd64 and arm64) and on Windows with Docker Desktop.
 - [ ] A real login test, then the log scan above.
 - [ ] `docs/technical.md` updated: what to fill in, the login steps, and Security notes if anything differs.
 - [ ] Before every commit, scan the diff for real hosts, addresses, names, passwords, cookies, tokens and keys.
