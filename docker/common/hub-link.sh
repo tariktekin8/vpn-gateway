@@ -8,10 +8,16 @@ dns_out="/state/${VPN_NAME}.dns"
 
 # Each rule is added once: the page starts this script again to apply new subnets (src/server.py apply_subnets).
 rule() { iptables -C "$@" 2>/dev/null || iptables -A "$@"; }
+rule6() { ip6tables -C "$@" 2>/dev/null || ip6tables -A "$@" 2>/dev/null || true; }  # no IPv6 support: nothing to do
 rule POSTROUTING -t nat -o "$iface" -j MASQUERADE
-# Nothing on the VPN side may open a connection towards the gateway or the computer; replies still pass.
-rule FORWARD -i "$iface" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-rule FORWARD -i "$iface" -j DROP
+# Nothing on the VPN side may open a connection towards the gateway, the computer or this container itself (for
+# example the FortiGate SAML relay on 8021); replies still pass. The same for IPv6, if the VPN gives one.
+for chain in FORWARD INPUT; do
+  rule "$chain" -i "$iface" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  rule "$chain" -i "$iface" -j DROP
+  rule6 "$chain" -i "$iface" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  rule6 "$chain" -i "$iface" -j DROP
+done
 
 # VPN_SUBNETS entries are "real" or "real>shown". A shown range is what the computer uses for a range another VPN
 # also has: addresses arriving from the gateway are mapped one to one onto the real range (replies map back).

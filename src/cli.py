@@ -94,11 +94,14 @@ def validate(data):
             value = s.get(field)
             if not isinstance(value, str) or not value.strip() or value == "TODO":
                 errors.append(f"{where}: '{field}' is required")
-        for field in ("host", "user"):
-            value = s.get(field)
-            # A leading "-" would become a VPN client option; "$" is expanded by compose; spaces split arguments.
-            if isinstance(value, str) and (value.startswith("-") or re.search(r"[\s$]", value)):
-                errors.append(f"{where}: '{field}' must not start with '-' or contain spaces or '$'")
+        host = s.get("host")
+        if isinstance(host, str) and host.strip() and host != "TODO" and not valid_host(host):
+            errors.append(f"{where}: 'host' must be a host name or IPv4 address, with an optional :port, "
+                          "for example vpn.example.com or vpn.example.com:10443")
+        user = s.get("user")
+        # A leading "-" would become a VPN client option; "$" is expanded by compose; spaces split arguments.
+        if isinstance(user, str) and (user.startswith("-") or re.search(r"[\s$]", user)):
+            errors.append(f"{where}: 'user' must not start with '-' or contain spaces or '$'")
         listed = s.get("domains", [])
         if not isinstance(listed, list) or not all(isinstance(d, str) and DOMAIN_RE.match(d) for d in listed):
             errors.append(f"{where}: 'domains' must be a list of lower-case domain names such as corp.example.com")
@@ -152,7 +155,10 @@ def render(data):
             "image": f"vpn-{method['image']}",
             "container_name": f"vpn-{s['name']}",
             "environment": env,
-            "cap_add": ["NET_ADMIN"],
+            # Only what a VPN client needs (tunnel, routes, firewall); no setuid program can gain more.
+            "cap_drop": ["ALL"],
+            "cap_add": ["NET_ADMIN", "NET_RAW"],
+            "security_opt": ["no-new-privileges:true"],
             "devices": ["/dev/net/tun"],
             "sysctls": {"net.ipv4.ip_forward": "1"},
             # Own network and own state volume: no other VPN container can reach it or change what it publishes.
@@ -175,7 +181,11 @@ def render(data):
         "build": {"context": "../docker", "dockerfile": "gateway/Dockerfile"},
         "image": "vpn-gateway",
         "container_name": f"vpn-{GATEWAY}",
+        # Docker's DNS answers the VPN containers' names itself and forwards other names to this server, where nothing
+        # listens: the gateway never asks the local network's DNS, which could answer a stopped VPN's name.
+        "dns": ["127.0.0.1"],
         "cap_add": ["NET_ADMIN"],
+        "security_opt": ["no-new-privileges:true"],
         "sysctls": {"net.ipv4.ip_forward": "1"},
         # Each VPN's state at /state/<name>/, read-only: the folder name, not the file, says which VPN wrote it.
         "volumes": [f"state-{s['name']}:/state/{s['name']}:ro" for s in data["systems"]] + ["./wireguard:/keys"],
@@ -254,6 +264,27 @@ def send_lines(container, lines, wait=30):
 WG_NET = ipaddress.ip_network("10.200.0.0/24")  # the gateway's WireGuard network (docker/gateway/entrypoint.sh)
 
 
+HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+HOST_RE = re.compile(rf"({HOST_LABEL}(?:\.{HOST_LABEL})*)(?::([0-9]{{1,5}}))?")
+NO_ROUTE = ipaddress.ip_network("0.0.0.0/8")
+
+
+def valid_host(host):
+    """A VPN address as the official client takes it: a host name or IPv4 address, and an optional :port."""
+    m = HOST_RE.fullmatch(host)
+    return bool(m) and len(m.group(1)) <= 253 and (m.group(2) is None or 1 <= int(m.group(2)) <= 65535)
+
+
+def check_range(net):
+    """Refuse ranges that must never go into a VPN tunnel."""
+    if net.version != 4:
+        raise ValueError("only IPv4 ranges are supported")
+    if net.prefixlen < 8:
+        raise ValueError("a range may be at most a /8; list the ranges you need")
+    if net.is_loopback or net.is_multicast or net.is_link_local or net.is_reserved or net.subnet_of(NO_ROUTE):
+        raise ValueError("loopback, link-local, multicast and reserved ranges cannot go through a VPN")
+
+
 def parse_subnet(entry):
     """Return (real, shown) networks for a subnets entry.
 
@@ -274,6 +305,8 @@ def parse_subnet(entry):
             raise ValueError("both ranges must be IPv4 and the same size, for example /16 as /16")
     else:
         raise ValueError('write a range, or "<range> as <other range>"')
+    check_range(real)
+    check_range(shown)
     return real, shown
 
 

@@ -49,6 +49,22 @@ Nothing yet.
 - **Sign-in links are checked.** The FortiGate "Authenticate at" link opens only if it is `https://` on the VPN's
   own host and port. A `gp-saml` callback is refused if its cookie or user name holds a line break or other control
   characters.
+- **The Mac tunnel service trusts only what you pinned with sudo.** The installer pins the gateway's public key,
+  the address ranges and the DNS domains in a root-owned folder. The service refuses a profile with another key,
+  endpoint port or address, uses only addresses inside the pinned ranges, writes resolver files only for pinned
+  domains and only with DNS servers inside the tunnel. A program running as your user can no longer pull the
+  computer's other traffic or other names through the tunnel. Its log is readable by root only.
+- **The gateway never asks the local network's DNS.** Its DNS has no upstream, so a stopped VPN's name cannot be
+  answered by someone on the local network.
+- **Stopped VPN containers are ignored.** The gateway routes to a VPN container, looks its name up and passes it
+  the FortiGate callback only while it writes its state file, and only to an address on its own Docker networks.
+- **Tighter containers.** VPN containers keep only `NET_ADMIN` and `NET_RAW`, run with `no-new-privileges`, and drop
+  connections from the VPN side to the container itself (IPv4 and IPv6). `curl` is no longer in the images.
+- **Stricter input.** `host` must be a host name or IPv4 address with an optional port. Subnets must be IPv4, at
+  most a `/8`, and not loopback, link-local, multicast or reserved.
+- The sign-in helper's `gp-saml` callback is taken only in the first 5 minutes of a login. The page's
+  Content-Security-Policy adds `base-uri 'none'` and `form-action 'self'`, and the page opens only `https://`
+  FortiGate links.
 - The gateway, the page and `./vpn status` never read a VPN's state file through a symlink. `./vpn login` deletes the portal's
   login form from `data/secrets/` once the login is done.
 
@@ -83,7 +99,11 @@ Nothing yet.
 - Names of the organization stop working until you allow their domains: open each VPN's **Names** tab and press
   **Use** next to each domain.
 - Mac with the automatic tunnel: run `sudo handlers/macos/install-tunnel.sh` again. It moves the service to
-  `/Library/PrivilegedHelperTools/vpn-gateway/` and removes `/usr/local/libexec/vpn-gateway-tunnel`.
+  `/Library/PrivilegedHelperTools/vpn-gateway/`, pins the gateway's key and removes
+  `/usr/local/libexec/vpn-gateway-tunnel`. Until you do, the new service refuses the profile. From now on, run it
+  again after you add a VPN, an address outside the pinned ranges or a DNS domain.
+- A subnet wider than `/8`, an IPv6 subnet or a `host` with a path or user name is refused now. `./vpn check` names
+  each one.
 - The old volume `vpn-gateway_state` is no longer used. Remove it with `docker volume rm vpn-gateway_state`.
 
 ## 1.0.0 (2026-11-18)

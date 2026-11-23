@@ -30,7 +30,11 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       `./vpn status` read those files only as regular files, never through a symlink; keep it that way.
 - [ ] A subnet the container publishes is used only if `systems.json` lists it for that system
       (`data/wireguard/route-owners`). Do not bypass that check.
-- [ ] Only `cap_add: NET_ADMIN` and the devices the client needs (`/dev/net/tun`, `/dev/ppp`). No `privileged`.
+- [ ] `cap_drop: ALL`, then only `cap_add: NET_ADMIN, NET_RAW`, `security_opt: no-new-privileges:true` and the
+      devices the client needs (`/dev/net/tun`, `/dev/ppp`). No `privileged`. If the client needs another
+      capability, say why in the pull request.
+- [ ] `hub-link.sh` keeps writing `/state/<name>.routes` every 5 seconds. The gateway treats a container whose file
+      is older than 15 seconds as stopped and never looks its name up.
 - [ ] If the client needs a callback port (like FortiGate SAML on 8020), it goes through the gateway and is
       published on `127.0.0.1` only. The computer picks which VPN gets it (`cli.claim_saml_port` writes
       `data/wireguard/saml-target`), never a VPN container; the container only says that its login waits
@@ -78,8 +82,9 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 
 - [ ] Only the subnets from `systems.json` go through the tunnel. A subnet with `ports` is limited to those TCP
       and UDP ports by the gateway's `ALLOWED` chain.
-- [ ] Nothing from the VPN side can open a connection towards the gateway or the computer (`hub-link.sh` FORWARD
-      rules). Only replies pass.
+- [ ] Nothing from the VPN side can open a connection towards the gateway, the computer or the container itself
+      (`hub-link.sh` FORWARD and INPUT rules, IPv4 and IPv6). Only replies pass. A listener in the container (like
+      the FortiGate relay on 8021) is then reachable only from the gateway's network.
 - [ ] `idle_minutes` works. `hub-link.sh` watches the tunnel's `tx_packets` and stops PID 1. Check that the new
       client exits cleanly on `SIGTERM`.
 - [ ] A VPN that pushes a default route changes routing only inside its own container.

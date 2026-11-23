@@ -68,6 +68,24 @@ inside() {
     END { exit !f }' "$2"
 }
 
+# A VPN container is alive if its hub-link.sh wrote /state/<name>/<name>.routes in the last 15 seconds (it writes
+# every 5). A stopped container leaves the file behind, and its name must then not be looked up: Docker's DNS would
+# pass the unknown name on to the local network's DNS, which could answer with any address.
+alive() {
+  local f="/state/$1/$1.routes" t
+  [ -f "$f" ] && [ ! -L "$f" ] || return 1
+  t=$(stat -c %Y "$f" 2>/dev/null) || return 1
+  [ $(( $(date +%s) - t )) -le 15 ]
+}
+# The container's address on one of the VPN networks: never a hop behind a router or on the default network.
+hop_of() {
+  local hop route
+  hop=$(getent hosts "$1" | awk '{print $1; exit}') || return 1
+  [[ "$hop" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  route=$(ip -4 route get "$hop" 2>/dev/null | head -n 1) || return 1
+  case "$route" in *" via "* | *" dev $DEFAULT_IF "*) return 1 ;; *" dev eth"*) echo "$hop" ;; *) return 1 ;; esac
+}
+
 declare -A routed=()   # subnet -> next hop, or "unreachable"
 last_allowed=""
 last_static="-"
@@ -98,8 +116,8 @@ while :; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue  # a VPN container could point a symlink at /keys/*.key
     name=$(basename "$(dirname "$f")")  # the volume's folder, which only that VPN can write
     [ "$f" = "/state/$name/$name.routes" ] || continue
-    hop=$(getent hosts "$name" | awk '{print $1; exit}') || true
-    [ -n "$hop" ] || continue
+    alive "$name" || continue
+    hop=$(hop_of "$name") || continue
     while read -r net; do
       # Only this VPN's own subnets from systems.json; anything else a container lists is ignored.
       [ -n "$net" ] && [ -n "${want[$net]:-}" ] && [ "${owner[$net]:-}" = "$name" ] && want[$net]=$hop
@@ -129,7 +147,7 @@ while :; do
   for name in $(awk '{ print $2 }' "$KEYS/dns-owners" 2>/dev/null | grep -E '^[a-z][a-z0-9-]{0,30}$' | sort -u); do
     servers=""
     f="/state/$name/$name.dns"
-    if [ -f "$f" ] && [ ! -L "$f" ] && getent hosts "$name" >/dev/null; then
+    if [ -f "$f" ] && [ ! -L "$f" ] && alive "$name"; then
       awk -v n="$name" '$2 == n { print $1 }' "$KEYS/route-owners" 2>/dev/null > /tmp/own-nets || true
       for ip in $(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }' "$f"); do
         inside "$ip" /tmp/own-nets && servers+=" $ip"

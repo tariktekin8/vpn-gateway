@@ -50,6 +50,7 @@ HANDLER_FILE = "web-handler.json"  # in data/secrets/: port and handler token fo
 # Present when handlers/macos/install-tunnel.sh runs the tunnel as a service: profile changes then apply by themselves.
 TUNNEL_SERVICE = Path("/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist")
 SAML_PAGE_TTL = 300  # seconds a one-time /saml/<nonce> page lives
+AWAIT_TTL = 300  # seconds a gp-saml login accepts the sign-in helper's callback; afterwards only a pasted link
 GATEWAY = cli.GATEWAY
 AUTH_RE = re.compile(r"Authenticate at\s+(\S+)")
 RELEASES_API = "https://api.github.com/repos/tariktekin8/vpn-gateway/releases/latest"
@@ -59,7 +60,7 @@ NO_UPDATE_CHECK = "VPN_GATEWAY_NO_UPDATE_CHECK"
 COMMON_HEADERS = [
     ("Cache-Control", "no-store"),
     ("X-Content-Type-Options", "nosniff"),
-    ("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'"),
+    ("Content-Security-Policy", "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"),
 ]
 # The SAML page HTML comes from the VPN gateway. On the app's own origin it could read the page token, so the
 # sandbox (without allow-same-origin) gives it an opaque origin; it can still auto-submit its form to the IdP.
@@ -67,7 +68,7 @@ SAML_PAGE_HEADERS = [
     ("Cache-Control", "no-store"),
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "no-referrer"),
-    ("Content-Security-Policy", "sandbox allow-scripts allow-forms; default-src 'none'; "
+    ("Content-Security-Policy", "sandbox allow-scripts allow-forms; default-src 'none'; base-uri 'none'; "
                                 "script-src 'unsafe-inline'; form-action https:; frame-ancestors 'none'"),
     ("Content-Type", "text/html; charset=utf-8"),
 ]
@@ -374,6 +375,7 @@ class App:
         self.state_lock = threading.Lock()
         self.ops = {}  # target -> {"busy": None|"starting"|"stopping", "error": None|str}
         self.awaiting = set()  # gp-saml systems waiting for the callback URL
+        self.awaiting_since = {}  # name -> clock() when its login started
         self.saml_pages = {}  # nonce -> (html bytes, expiry, system name); memory only, one use
         self.clock = time.monotonic
         self.threads = []
@@ -786,6 +788,7 @@ class App:
                 else:
                     popup_url = target
                 self.awaiting.add(name)
+                self.awaiting_since[name] = self.clock()
             return respond(202, {"ok": True, "login": "gp-saml", "popup_url": popup_url})
         if password is None:
             cli.claim_saml_port(systems, [name])
@@ -835,6 +838,7 @@ class App:
         env = {**os.environ, f"{var}_USER": user, f"{var}_ARGS": f"--usergroup={usergroup}"}
         with self.state_lock:
             self.awaiting.discard(name)
+            self.awaiting_since.pop(name, None)
         # A SAML cookie is new on every login, so that container must start fresh.
         self.spawn([name], [(compose_argv("up", "-d", "--build", GATEWAY), None),
                             (compose_argv("up", "-d", "--build", "--force-recreate", name), env),
@@ -844,8 +848,11 @@ class App:
     def handler_callback(self, payload):
         """The macOS handler's callback: goes to the one gp-saml system that waits for it, never a guess."""
         body = as_object(payload)
+        # Any website can make the browser open a globalprotectcallback: link. So only a login started in the last
+        # five minutes takes one from the helper; an older one needs the link pasted on its page.
+        now = self.clock()
         with self.state_lock:
-            waiting = sorted(self.awaiting)
+            waiting = sorted(n for n in self.awaiting if now - self.awaiting_since.get(n, now - AWAIT_TTL) < AWAIT_TTL)
         if not waiting:
             raise HttpError(409, {"error": "no gp-saml login is waiting; press Log in / Start in VPN Gateway first"})
         if len(waiting) > 1:

@@ -44,7 +44,8 @@ Step by step, with a flowchart for each system: [Setup on a Mac](docs/technical.
 
 ## Security
 
-- Each organization's VPN runs apart; none can reach another or open a connection to your computer.
+- Each organization's VPN runs apart; no organization's network can reach another or open a connection to your
+  computer.
 - Passwords are asked at every connect and never stored. Passwords and login cookies never reach a file or a log.
 - The page works only on your computer, and only with the link that `./vpn web` prints.
 - It cannot protect a compromised computer, which reaches every connected organization at once.

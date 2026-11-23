@@ -4,8 +4,13 @@
 # Runs as root from launchd (installed by handlers/macos/install-tunnel.sh).
 # Usage: tunnel-service <path to data/wireguard/mac.conf>
 #
-# The profile lives in a folder the user can write. So the profile is never used as is: only the known keys with
-# plain values are copied, the endpoint must be 127.0.0.1, and no AllowedIPs entry may be a whole-internet /0.
+# The profile and the dns file live in a folder the user can write, and the user can read the gateway's private key
+# and run Docker. So a program running as the user could run a WireGuard server of its own with the gateway's key.
+# The service therefore trusts only what install-tunnel.sh pinned in its root-owned folder when the user ran it with
+# sudo: the gateway's public key (peer), the address ranges (allowed) and the DNS domains (domains). The profile is
+# never used as is: only known keys with plain values are copied, the endpoint must be 127.0.0.1:51820, and an
+# AllowedIPs entry is used only if it lies inside a pinned range. A resolver file is written only for a pinned domain,
+# with DNS servers inside the tunnel. New ranges or domains need install-tunnel.sh again.
 # Root never runs a program from a folder the user can write: wg and wireguard-go are copies in this script's own
 # root-owned folder (install-tunnel.sh), and PATH holds only system folders. wg-quick is not used: it needs a bash 4+,
 # which only Homebrew provides, from a folder the user can write.
@@ -18,19 +23,59 @@ WG_GO="$here/wireguard-go"
 conf_dir=/etc/wireguard
 conf="$conf_dir/vpn-gateway.conf"
 name_file=/var/run/wireguard/vpn-gateway.name  # wireguard-go writes the utunN name here
+peer_file="$here/peer"        # the gateway's public key, pinned by install-tunnel.sh
+allowed_file="$here/allowed"  # the address ranges, one per line, pinned by install-tunnel.sh
+domains_file="$here/domains"  # the DNS domains, one per line, pinned by install-tunnel.sh
 
+# Prints the cleaned profile, or nothing when the gateway key is not the pinned one or the address or endpoint differ.
+# AllowedIPs keeps only the entries inside a pinned range.
 clean_profile() {
-  awk '
+  local peer out
+  peer=$(head -n 1 "$peer_file" 2>/dev/null)
+  printf '%s' "$peer" | grep -Eq '^[A-Za-z0-9+/]{43}=$' || return 0
+  [ -s "$allowed_file" ] || return 0
+  out=$(awk -v peer="$peer" -v pinned="$(tr '\n' ' ' 2>/dev/null < "$allowed_file")" '
+    function oct(x) { return x ~ /^(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$/ }
+    function num(a,  p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+    # A well-formed a.b.c.d/len, /8 to /32, that lies inside one of the pinned ranges.
+    function ok_net(e,  c, q, k, m, s) {
+      if (split(e, c, "/") != 2 || c[2] !~ /^([89]|[12][0-9]|3[012])$/) return 0
+      if (split(c[1], q, ".") != 4 || !oct(q[1]) || !oct(q[2]) || !oct(q[3]) || !oct(q[4])) return 0
+      m = split(pinned, P, " ")
+      for (k = 1; k <= m; k++) {
+        if (split(P[k], s, "/") != 2 || s[2] !~ /^[0-9]+$/ || c[2] + 0 < s[2] + 0) continue
+        if (int(num(c[1]) / 2 ^ (32 - s[2])) == int(num(s[1]) / 2 ^ (32 - s[2]))) return 1
+      }
+      return 0
+    }
     /^\[(Interface|Peer)\]$/ { print; next }
-    /^(PrivateKey|PublicKey) = [A-Za-z0-9+\/]{43}=$/ { print; next }
-    /^Address = [0-9.]+\/[0-9]+$/ { print; next }
-    /^Endpoint = 127\.0\.0\.1:[0-9]+$/ { print; next }
-    /^AllowedIPs = [0-9.\/, ]+$/ && !/\/0([ ,]|$)/ { print; next }
+    /^PrivateKey = [A-Za-z0-9+\/]+=$/ && length($3) == 44 { print; next }
+    /^PublicKey = / { if ($3 == peer) { print; ok = 1 } next }
+    /^Address = 10\.200\.0\.2\/32$/ { print; ad = 1; next }
+    /^Endpoint = 127\.0\.0\.1:51820$/ { print; ep = 1; next }
+    /^AllowedIPs = / {
+      n = split(substr($0, 14), e, /[, ]+/); out = ""
+      for (i = 1; i <= n; i++)
+        if (ok_net(e[i])) out = out (out == "" ? "" : ", ") e[i]
+      if (out != "") print "AllowedIPs = " out
+      next
+    }
     /^PersistentKeepalive = [0-9]+$/ { print; next }
-  ' "$1"
+    END { if (!ok || !ad || !ep) exit 1 }
+  ' "$1") && printf '%s\n' "$out"
 }
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+# True if IPv4 address $1 goes into the tunnel: it is inside an AllowedIPs entry of the applied (cleaned) profile.
+in_tunnel() {
+  [ -f "$conf" ] || return 1
+  awk -v ip="$1" 'function n(a,  p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+    /^AllowedIPs = / { m = split(substr($0, 14), e, /[, ]+/)
+      for (i = 1; i <= m; i++) { split(e[i], c, "/"); if (c[2] == "") continue
+        s = 2 ^ (32 - c[2]); if (int(n(ip) / s) == int(n(c[1]) / s)) f = 1 } }
+    END { exit !f }' "$conf"
+}
 
 # A file root reads from the user's folder: a regular file, not a link, owned by the folder's owner. So the user
 # cannot make root read a root-only file through a symlink or a hard link.
@@ -45,9 +90,11 @@ RESOLVER_DIR="${SAML_RESOLVER_DIR:-/etc/resolver}"  # the override exists for te
 
 # Write $RESOLVER_DIR/<domain> for each "domain server..." line of the gateway's dns file, and delete the files of
 # domains that are gone. Only files that start with $MARK are touched: a file you wrote yourself is never changed.
-# The dns file sits in a folder the user can write, so every domain and address is checked before use.
+# The dns file sits in a folder the user can write, so every domain and address is checked before use, and a DNS
+# server must be inside the tunnel (the gateway, or a VPN's subnet): never a server on the internet or the local
+# network that a program running as the user could choose.
 apply_dns() {
-  local file="$1" keep=" " domain servers body s target f good
+  local file="$1" keep=" " domain servers body s target f good unpinned=""
   mkdir -p "$RESOLVER_DIR"
   if plain_file "$file"; then
     while read -r domain servers; do
@@ -55,10 +102,12 @@ apply_dns() {
       # At least one dot (never a whole top-level domain), only letters, digits, "-" and dots.
       printf '%s' "$domain" | grep -Eq '^[a-z0-9-]+(\.[a-z0-9-]+)+$' || continue
       [ "${#domain}" -le 253 ] || continue
+      if ! grep -Fxq "$domain" "$domains_file" 2>/dev/null; then unpinned="$unpinned $domain"; continue; fi
       body="$MARK"
       good=""
       for s in $servers; do
         printf '%s' "$s" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || continue
+        in_tunnel "$s" || continue
         body="$body"$'\n'"nameserver $s"
         good="$good $s"
       done
@@ -71,6 +120,10 @@ apply_dns() {
       fi
       keep="$keep$domain "
     done < "$file"
+  fi
+  if [ "$unpinned" != "$last_unpinned" ]; then
+    [ -z "$unpinned" ] || log "DNS: domains not allowed at install:$unpinned; run install-tunnel.sh again to add them"
+    last_unpinned=$unpinned
   fi
   for f in "$RESOLVER_DIR"/*; do
     [ -f "$f" ] && ours "$f" || continue
@@ -115,21 +168,38 @@ tunnel_up() {
   done
 }
 
+last_unpinned=""
 [ "${1:-}" = "--apply-dns" ] && { apply_dns "$2"; exit 0; }  # one run, for testing
 
 umask 077
 mkdir -p "$conf_dir"
 applied=""
+warned=""
 while :; do
   profile=""
-  plain_file "$src" && profile=$(clean_profile "$src")
+  readable=""
+  plain_file "$src" && readable=1 && profile=$(clean_profile "$src")
+  if [ -n "$readable" ] && [ -z "$profile" ] && [ -z "$warned" ]; then
+    if [ ! -s "$peer_file" ] || [ ! -s "$allowed_file" ]; then
+      log "nothing pinned yet: run install-tunnel.sh again"
+    else
+      log "profile refused: its gateway key, address or endpoint is not what was pinned at install;" \
+          "run install-tunnel.sh again if the gateway got new keys"
+    fi
+    warned=1
+  fi
   if [ -n "$profile" ]; then
+    warned=
     # Bring it up again when the profile changed or the interface is gone (sleep, network change).
     if [ "$profile" != "$applied" ] || ! tunnel_alive; then
       printf '%s\n' "$profile" > "$conf.tmp" && mv "$conf.tmp" "$conf"
       if tunnel_up; then
         applied=$profile
         log "tunnel up: $(grep '^AllowedIPs' "$conf")"
+        wanted=$(awk '/^AllowedIPs = / { n += split(substr($0, 14), e, /[, ]+/) } END { print n + 0 }' "$src")
+        got=$(awk '/^AllowedIPs = / { n += split(substr($0, 14), e, /[, ]+/) } END { print n + 0 }' "$conf")
+        [ "$wanted" -le "$got" ] ||
+          log "$((wanted - got)) addresses are not inside the ranges allowed at install; run install-tunnel.sh again to add them"
       else
         applied=""
         log "tunnel up failed; trying again in 30 s"

@@ -944,7 +944,7 @@ function renderCard(card) {
         card.passOpen = false;
     show(card.pass.form, card.passOpen);
     const fortiUrl = login?.kind === "forti-saml" && typeof login.auth_url === "string" ? login.auth_url : "";
-    const fortiSafe = fortiUrl.startsWith("https://") || fortiUrl.startsWith("http://");
+    const fortiSafe = fortiUrl.startsWith("https://"); // the server sends only https links on the VPN's own host
     if (fortiUrl) {
         setText(card.fortiLink, fortiUrl);
         if (!fortiSafe)
