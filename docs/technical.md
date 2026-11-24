@@ -83,7 +83,8 @@ flowchart LR
 
 ## What you need
 
-A few free programs. Install them once.
+A few programs. Install them once. Docker Desktop is free for personal use and small companies only: check its
+terms if you use it for a larger company. The others are free.
 
 | | Mac | Windows |
 |---|---|---|
@@ -96,8 +97,7 @@ After installing Docker Desktop, open it once and wait until it says it is runni
 
 More about the requirements:
 
-- macOS on Apple silicon or Intel, or Windows 10/11. The containers are Linux, so the gateway itself also runs on
-  Linux.
+- macOS on Apple silicon or Intel, or Windows 10/11.
 - Docker Desktop must include `docker compose` (Docker Engine 28 or later, Compose 2.33 or later: the compose file
   uses `gw_priority`) and must be running while you use VPN Gateway. On Windows it uses the **WSL 2** backend
   (the default).
@@ -115,18 +115,18 @@ flowchart TD
     git -->|"No"| clt["Accept the developer tools install<br/>it also installs Python 3"]
     git -->|"Yes"| clone
     clt --> clone["git clone https://github.com/tariktekin8/vpn-gateway.git<br/>cd vpn-gateway"]
-    clone --> web["./vpn web<br/>creates data/, the WireGuard keys and the compose file<br/>prints a one-time link and opens it"]
-    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes"]
+    clone --> web["./vpn web<br/>creates data/<br/>prints the page's link and opens it"]
+    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes<br/>and makes the WireGuard keys and the profile"]
     gw --> tunnel{"How should the<br/>tunnel run?"}
     tunnel -->|"Automatic tunnel (recommended)"| brew["brew install wireguard-tools<br/>sudo handlers/macos/install-tunnel.sh"]
     brew --> off["Turn off every vpn-gateway tunnel<br/>in the WireGuard app"]
     tunnel -->|"WireGuard app"| import["Page: Download profile<br/>WireGuard app: Import tunnel(s) from file, Activate"]
     off --> add
-    import --> add["Page: Add VPN<br/>name, method, host, subnets"]
+    import --> add["Page: Add VPN<br/>name, type, VPN address, addresses"]
     add --> pinq{"Automatic tunnel?"}
     pinq -->|"Yes"| pin["sudo handlers/macos/install-tunnel.sh again<br/>allows the new addresses"]
     pinq -->|"No"| method
-    pin --> method{"Method"}
+    pin --> method{"Type"}
     method -->|"gp-saml"| helper["Optional, once: handlers/macos/install.sh<br/>the sign-in helper catches the callback link"]
     method -->|"gp-password or forti-saml"| connect
     helper --> connect["Page: Connect<br/>first time: builds the VPN image"]
@@ -165,13 +165,14 @@ cd vpn-gateway
 ./vpn web
 ```
 
-`./vpn web` creates the `data/` folder, the WireGuard keys and the compose file, prints the page's link
-(`http://127.0.0.1:8765/#token=...`) and opens it in your browser. The link holds the page's key and changes at
-every start. Keep Terminal open while you use the page; Ctrl-C stops the page, and your VPN connections keep running.
+`./vpn web` creates the `data/` folder, prints the page's link (`http://127.0.0.1:8765/#token=...`) and opens it in
+your browser. The link holds the page's key and changes at every start. Keep Terminal open while you use the page;
+Ctrl-C stops the page, and your VPN connections keep running.
 
 ### 3. Start the gateway and connect the tunnel
 
-1. On the page, press **Start the gateway**. The first time builds the gateway image and takes a few minutes.
+1. On the page, press **Start the gateway**. The first time builds the gateway image and takes a few minutes. The
+   gateway then makes the WireGuard keys and the profile.
 2. Connect your computer to the gateway in one of two ways. Use only one of them: two clients with the same key
    break each other.
    - **Automatic tunnel (recommended).** A system service runs the tunnel and writes the DNS files for your VPNs.
@@ -184,9 +185,9 @@ every start. Keep Terminal open while you use the page; Ctrl-C stops the page, a
      ```
 
      Then turn off every `vpn-gateway` tunnel in the WireGuard app. See [Automatic tunnel (Mac)](#automatic-tunnel-mac).
-   - **WireGuard app.** Press **Download profile** (under **Advanced** or in the gateway's **Details**). In the
-     WireGuard app, choose **Import tunnel(s) from file**, pick `vpn-gateway.conf` and activate it. Import it again
-     whenever the page says **Your WireGuard profile changed**.
+   - **WireGuard app.** Press **Download profile** in the gateway's **Details**, or **Download WireGuard profile**
+     under **Advanced**. In the WireGuard app, choose **Import tunnel(s) from file**, pick `vpn-gateway.conf` and
+     activate it. Import it again whenever the page says **Your WireGuard profile changed**.
 
 ### 4. Add and connect your VPNs
 
@@ -217,11 +218,11 @@ flowchart TD
     wg --> py["Install Python<br/>tick Add python.exe to PATH"]
     py --> git["Install Git for Windows<br/>default options"]
     git --> clone["PowerShell: cd $HOME<br/>git clone https://github.com/tariktekin8/vpn-gateway.git<br/>cd vpn-gateway"]
-    clone --> web[".\vpn.cmd web<br/>creates data\, the WireGuard keys and the compose file<br/>prints a one-time link and opens it"]
-    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes"]
+    clone --> web[".\vpn.cmd web<br/>creates data\<br/>prints the page's link and opens it"]
+    web --> gw["Page: Start the gateway<br/>first time: builds the gateway image, a few minutes<br/>and makes the WireGuard keys and the profile"]
     gw --> import["Page: Download profile<br/>WireGuard: Import tunnel(s) from file, Activate"]
-    import --> add["Page: Add VPN<br/>name, method, host, subnets"]
-    add --> method{"Method"}
+    import --> add["Page: Add VPN<br/>name, type, VPN address, addresses"]
+    add --> method{"Type"}
     method -->|"gp-saml"| helper["Optional, once: handlers\windows\install.ps1<br/>the sign-in helper catches the callback link"]
     method -->|"gp-password or forti-saml"| connect
     helper --> connect["Page: Connect<br/>first time: builds the VPN image"]
@@ -267,7 +268,8 @@ printed. Keep PowerShell open while you use the page; Ctrl-C stops it.
 ### 3. Start the gateway and connect the tunnel
 
 1. On the page, press **Start the gateway**. The first time takes a few minutes.
-2. Press **Download profile** (under **Advanced** or in the gateway's **Details**). In WireGuard, choose
+2. Press **Download profile** in the gateway's **Details**, or **Download WireGuard profile** under **Advanced**. In
+   WireGuard, choose
    **Import tunnel(s) from file**, pick `vpn-gateway.conf` and activate it.
 3. Import it again whenever the page says **Your WireGuard profile changed** (after you change a VPN's addresses).
 
@@ -297,10 +299,10 @@ answers to `data/systems.json`; nothing else needs to be configured by hand.
 | Field | What to write |
 |---|---|
 | **Name** | A short name for yourself, for example `connection-1`. Starts with a small letter; then small letters, numbers and `-`; at most 31 characters. `gateway` is taken. |
-| **Method** | `gp-password`: GlobalProtect with a user name and password. `gp-saml`: GlobalProtect that opens a sign-in page. `forti-saml`: FortiGate (FortiClient) that opens a sign-in page. |
-| **Host** | The VPN address, for example `vpn1.example.com`: a host name or IPv4 address, nothing else. Add `:port` if they gave you a port, for example `vpn3.example.com:10443`. |
-| **User** | Your VPN user name (only for `gp-password`). |
-| **Subnets** | The addresses you want to reach through this VPN, one per line, for example `10.20.0.15`. **Only these go through the VPN; nothing else does.** Add the VPN's DNS server too if you want to use names. To allow only some ports, add them at the end: `10.20.0.15 ports 443,3389`. If two VPNs use the same addresses, write `10.10.0.0/16 as 100.64.0.0/16` for one of them and use the second range to reach it. IPv4 only, at most a `/8`. |
+| **Type** | `gp-password`: GlobalProtect with a user name and password. `gp-saml`: GlobalProtect that opens a sign-in page. `forti-saml`: FortiGate (FortiClient) that opens a sign-in page. |
+| **VPN address** | The VPN's address, for example `vpn1.example.com`: a host name or IPv4 address, nothing else. Add `:port` if they gave you a port, for example `vpn3.example.com:10443`. |
+| **User name** | Your VPN user name (only for `gp-password`). |
+| **Addresses** | The addresses you want to reach through this VPN, one per line, for example `10.20.0.15` (`subnets` in `systems.json`). **Only these go through the VPN; nothing else does.** Add the VPN's DNS server too if you want to use names. To allow only some ports, add them at the end: `10.20.0.15 ports 443,3389`. If two VPNs use the same addresses, write `10.10.0.0/16 as 100.64.0.0/16` for one of them and use the second range to reach it. IPv4 only, at most a `/8`. |
 | **Disconnect when idle** | Optional. Minutes without traffic from your computer after which the VPN disconnects, for example `120`. Empty: it stays connected. |
 
 ## Every day
@@ -330,13 +332,13 @@ VPN sessions end after some hours, as the organization sets them. When a VPN's d
 **Connect** again.
 
 Without the automatic tunnel, the top strip says **Your WireGuard profile changed** after you change a VPN's
-addresses. Press **Download profile** and import it again in WireGuard (it asks to replace the old one). On a Mac
-the [automatic tunnel](#automatic-tunnel-mac) does this for you.
+addresses. Press **Download profile** and import it again in WireGuard. Keep only the new tunnel on: two with the
+same key break each other. On a Mac the [automatic tunnel](#automatic-tunnel-mac) does this for you.
 
 ## Reaching servers by name
 
-Every address you list in a VPN's **Subnets** works by its number, for example `10.20.0.15`. To use names such as
-`server.corp1.example.com`, the VPN's **DNS server** must be in its Subnets too, and you must allow the domain. The
+Every address you list in a VPN's **Addresses** works by its number, for example `10.20.0.15`. To use names such as
+`server.corp1.example.com`, the VPN's **DNS server** must be in its Addresses too, and you must allow the domain. The
 VPN's **Names** tab shows the domains and DNS servers the VPN sent: press **Use** next to a domain to allow it, and
 **Add to Addresses** next to a DNS server. Allow only the organization's own domains. A VPN cannot make your
 computer look up any other name through it, for example a public website's or another organization's.
@@ -344,7 +346,7 @@ computer look up any other name through it, for example a public website's or an
 **Mac with the [automatic tunnel](#automatic-tunnel-mac):** after you allow a domain, run
 `sudo handlers/macos/install-tunnel.sh` again; the service uses only the domains that existed when it last ran.
 Then names work by themselves. When the VPN connects, VPN Gateway writes `/etc/resolver/<domain>` for each allowed domain within 5 seconds, with
-the DNS servers the VPN sent that are inside its own Subnets. While the VPN is off, the file points at the gateway
+the DNS servers the VPN sent that are inside its own Addresses. While the VPN is off, the file points at the gateway
 (`10.200.0.1`), which answers every name with "no such name": the lookup fails at once and the internal name never
 goes to your normal DNS. The file is deleted when you stop allowing the domain or delete the VPN. It only touches files whose first line is `# managed by vpn-gateway`, so a file you wrote yourself
 stays as it is: delete your own file if you want VPN Gateway to take over that domain. Every domain and address is
@@ -393,7 +395,7 @@ System files change only when you install one of these optional parts, or set up
 
 | Part | System files it writes | Removed by |
 |---|---|---|
-| Automatic tunnel (`sudo handlers/macos/install-tunnel.sh`, runs as root) | `/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist` (a background service)<br>`/Library/PrivilegedHelperTools/vpn-gateway/` (the service's script, its copies of `wg` and `wireguard-go`, and the pinned gateway key)<br>`/etc/wireguard/vpn-gateway.conf` (a copy of the WireGuard profile)<br>`/etc/resolver/<domain>` (one file per VPN domain, marked `# managed by vpn-gateway`)<br>`/var/log/vpn-gateway.log` (its log, readable by root only) | `sudo handlers/macos/uninstall-tunnel.sh` removes all but the log; delete the log with `sudo rm /var/log/vpn-gateway.log` |
+| Automatic tunnel (`sudo handlers/macos/install-tunnel.sh`, runs as root) | `/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist` (a background service)<br>`/Library/PrivilegedHelperTools/vpn-gateway/` (the service's script, its copies of `wg` and `wireguard-go`, and the pinned gateway key, address ranges and domains)<br>`/etc/wireguard/vpn-gateway.conf` (a copy of the WireGuard profile)<br>`/etc/resolver/<domain>` (one file per VPN domain, marked `# managed by vpn-gateway`)<br>`/var/log/vpn-gateway.log` (its log, readable by root only) | `sudo handlers/macos/uninstall-tunnel.sh` removes all but the log; delete the log with `sudo rm /var/log/vpn-gateway.log` |
 | Sign-in helper (`handlers/macos/install.sh`) | `~/Applications/VPN Gateway Callback.app`, registered with macOS to open `globalprotectcallback:` links | `handlers/macos/uninstall.sh` |
 | DNS by hand ([Reaching servers by name](#reaching-servers-by-name)) | The `/etc/resolver/<domain>` files you create | `sudo rm /etc/resolver/<domain>` |
 
@@ -433,7 +435,8 @@ Gateway never updates itself: you choose when.
   2. Stop `./vpn web` with Ctrl-C.
   3. In the `vpn-gateway` folder, run `git pull`. Your `data/` folder is not changed.
   4. Start `./vpn web` again (`.\vpn.cmd web` on Windows).
-  5. Disconnect and connect each VPN once. The new images are built then.
+  5. Disconnect and connect each VPN once. The new images, also the gateway's, are built then. Other VPNs can lose
+     their traffic until the first **Connect** has replaced the gateway.
 - To turn the check off, set the environment variable `VPN_GATEWAY_NO_UPDATE_CHECK=1` before `./vpn web`.
 
 The check runs once at each start of `./vpn web`. It asks GitHub for the newest release of this project
@@ -463,7 +466,7 @@ the server; the containers keep running.
 
 - **Addresses** lists every address of the VPN and whether local (`route -n get` on a Mac, the best route on
   Windows), the gateway (`ip route` in the gateway container) and the VPN container (`/state/<name>/<name>.routes` in the gateway) use it.
-  Adding or removing an address there, or changing subnets in **Settings**, saves `systems.json` and gives a
+  Adding or removing an address there saves `systems.json` and gives a
   connected VPN its new list at once: the page starts the container's `hub-link.sh` again with the new
   `VPN_SUBNETS` and stops the old one, so the VPN session stays up. The automatic tunnel applies the new profile
   within 5 seconds.
@@ -538,7 +541,7 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
 
 **About `subnets`:**
 
-- List what you need: networks (`10.10.0.0/16`) or single servers (`10.10.1.5`, saved as `/32`).
+- List what you need: networks (`10.10.0.0/16`) or single servers (`10.10.1.5`, the same as `10.10.1.5/32`).
 - **Only these addresses go through the VPN.** The routes the VPN server pushes are ignored, and a system with
   empty `subnets` (`[]`) reaches nothing. The gateway enforces this with a firewall allow-list, and a listed range
   whose VPN is not connected is dropped, never sent out through the normal internet.
@@ -554,14 +557,15 @@ On Windows: `mkdir data`, `copy systems.example.json data\systems.json`, `notepa
   at its real address, which takes that one address away from the other VPN.
 - **Only some ports:** end the entry with `ports` and up to 15 port numbers, for example `"10.20.0.15 ports 443,3389"`
   or `"10.10.0.0/16 as 100.64.0.0/16 ports 22"`. The gateway then forwards only TCP and UDP to those ports of that
-  range (`data/wireguard/port-limits`); ping and other ports are dropped. Without `ports`, every port is allowed.
+  range (`data/gateway/port-limits`); ping and other ports are dropped. Without `ports`, every port is allowed.
 - IPv4 only, and at most a `/8`. Loopback (`127.0.0.0/8`), link-local (`169.254.0.0/16`), multicast, reserved
   and `0.0.0.0/8` ranges are refused: they must never go into a tunnel.
 - `"TODO"` is accepted as a placeholder and ignored.
 - If a range clashes with your home or office network (for example `192.168.0.0/16` against your Wi-Fi's
   `192.168.1.0/24`), list the narrower ranges you need.
 
-**About passwords:** `data/systems.json` holds no password, cookie or token; VPN Gateway refuses one there. It asks
+**About passwords:** `data/systems.json` holds no password, cookie or token: VPN Gateway deletes a `password` field
+from it and refuses the other secret fields. It asks
 for a `gp-password` password at every connect and sends it straight into the VPN container (see
 [Security notes](#security-notes)). Everything VPN Gateway writes lives in `data/`, which is git-ignored. Never
 commit it.
@@ -596,10 +600,10 @@ Validate the file at any time:
    ```
 
    ```text
-   gateway       wireguard    running      Mac connected
-   connection-1  gp-password  running      tun0 up, 1 routes to Mac
-   connection-2  gp-saml      running      tun0 up, 2 routes to Mac
-   connection-3  forti-saml   running      ppp0 up, 3 routes to Mac
+   gateway      wireguard    running      Mac connected
+   connection-1 gp-password  running      tun0 up, 1 routes to Mac
+   connection-2 gp-saml      running      tun0 up, 2 routes to Mac
+   connection-3 forti-saml   running      ppp0 up, 3 routes to Mac
    ```
 
    "Mac" in this output means your computer, on Windows too.
@@ -608,7 +612,7 @@ Validate the file at any time:
 > `data/systems.json` and nothing else, so it changes only when you edit `subnets`, never when a VPN connects or
 > disconnects. The WireGuard app does not reload the file by itself. While a VPN is off, its addresses still
 > enter the tunnel and are dropped at the gateway. The web page's top strip tells you when this is needed; in the
-> terminal, the gateway log shows the new list: `docker logs vpn-gateway | tail -1`. The
+> terminal, the gateway log shows the new list: `docker logs vpn-gateway 2>&1 | grep "Mac profile" | tail -1`. The
 > [automatic tunnel](#automatic-tunnel-mac) does this for you on a Mac.
 
 ## Log in to each VPN (command line)
@@ -649,7 +653,7 @@ link for you, so you skip steps 2, 4 and 5. The command line always asks you to 
    The gateway connects a browser connection to the VPN only once its request arrives: browsers open spare
    connections ahead of time, and openfortivpn serves one connection at a time, so an idle spare would hold the
    sign-in back for about a minute. A connection that sends nothing for 60 seconds is closed.
-  Nothing to copy.
+   Nothing to copy.
 
 ## Everyday commands
 
@@ -745,7 +749,8 @@ sudo handlers/macos/uninstall-tunnel.sh      # remove it
   - A program running as you that runs its own WireGuard server with the gateway's key could answer the pinned
     domains and take the traffic to the pinned addresses. It cannot reach any other name or address.
 - Before it changes anything, the installer lists what the service will trust: the gateway's public key, every
-  address range, every domain, and the path and SHA-256 of the `wg` and `wireguard-go` it copies. Lines marked `+`
+  address range, every domain, and the path and SHA-256 of the three programs it copies (`tunnel-service`, `wg` and
+  `wireguard-go`). Lines marked `+`
   are new since the last install, `-` go away. It asks `Install with these? [y/N]` on the terminal; anything but
   yes changes nothing. `--yes` skips the question. Check the `+` lines: a program running as you could have added
   a range or a domain to `data/wireguard/` before you ran it.
@@ -766,10 +771,10 @@ Everything else works the same way on Windows.
 
 - Commands: `.\vpn.cmd` in place of `./vpn`.
 - Names: NRPT rules instead of `/etc/resolver` (see [Reaching servers by name](#reaching-servers-by-name)).
-- Files: Windows has no `chmod 600`. VPN Gateway creates `data\secrets` and `data\wireguard` with `icacls`: they
-  stop inheriting the parent folder's permissions and allow only your user (full control). It prints a warning if
-  `icacls` fails. Keep the project in your user folder. If Docker Desktop cannot read `data\wireguard` afterwards,
-  report it.
+- Files: Windows has no `chmod 600`. VPN Gateway limits `data\secrets`, `data\wireguard` and `data\gateway` with
+  `icacls`: they stop inheriting the parent folder's permissions and allow only your user (full control). It prints
+  a warning if `icacls` fails. Keep the project in your user folder. If Docker Desktop cannot read `data\wireguard`
+  afterwards, report it.
 
 ### Sign-in helper (Windows)
 
@@ -793,7 +798,8 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 
 1. `./vpn` reads `data/systems.json`, checks it and writes
    `data/docker-compose.generated.json`: one service per system plus the `gateway` service.
-2. Each VPN container runs its client (openconnect or openfortivpn) with `NET_ADMIN` and `/dev/net/tun`.
+2. Each VPN container runs its client (openconnect or openfortivpn) with `NET_ADMIN`, `NET_RAW` and
+   `/dev/net/tun` (FortiGate also `/dev/ppp`).
    A helper script (`docker/common/hub-link.sh`) adds NAT on the tunnel interface and writes the routes it serves
    to its own volume (`state-<name>`), `/state/<name>.routes`, every 5 seconds: the `subnets` from `data/systems.json` (the shown
    side of an `as` mapping), never the routes the VPN pushed. Its firewall drops connections opened from the VPN
@@ -801,12 +807,12 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
    vpnc-script writes in the container; openfortivpn: from its "Got addresses … ns […], ns_suffix […]" log line).
 3. The gateway (`docker/gateway/entrypoint.sh`) runs WireGuard on `10.200.0.1/24` and publishes UDP 51820 on
    `127.0.0.1` only. It mounts each VPN's volume read-only at `/state/<name>/`. Every 5 seconds it reads them,
-   routes each network to the VPN it belongs to in `systems.json` (`data/wireguard/route-owners`), and rewrites `data/wireguard/mac.conf`. Its `AllowedIPs` hold the `subnets` from `systems.json` (VPN Gateway
-   writes them to `data/wireguard/static-routes`) and nothing else. The same list is the gateway's firewall
-   allow-list; a listed range without a connected VPN gets an `unreachable` route, so it never leaks out through
-   Docker's network. It writes `data/wireguard/dns` ("domain server…" lines): for each connected VPN, the domains
-   allowed for it (`data/wireguard/dns-owners`, from `domains`) with the DNS servers it sent that are inside its own
-   `subnets`.
+   routes each network to the VPN it belongs to in `systems.json` (`data/gateway/route-owners`), and rewrites
+   `data/wireguard/mac.conf`. Its `AllowedIPs` hold the `subnets` from `systems.json` (VPN Gateway writes them to
+   `data/gateway/static-routes`) and nothing else. The same list is the gateway's firewall allow-list; a listed
+   range without a connected VPN gets an `unreachable` route, so it never leaks out through Docker's network. It
+   writes `data/wireguard/dns` ("domain server…" lines): for each connected VPN, the domains allowed for it
+   (`data/gateway/dns-owners`, from `domains`) with the DNS servers it sent that are inside its own `subnets`.
 4. On your computer, WireGuard sends only those networks into the tunnel. Everything else uses your normal
    connection.
 
@@ -839,7 +845,9 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 
 ## Troubleshooting
 
-**`./vpn status` says "no routes to Mac".** The VPN is not logged in yet. Run `./vpn login <name>`.
+**`./vpn status` says "no routes to Mac".** The VPN is connected, but shares no addresses with the gateway: its
+`subnets` are empty, or it connected a few seconds ago. `tun0 down` or `ppp0 down` means that it is not logged in: run
+`./vpn login <name>`.
 
 **Mac: addresses work only now and then, and `/var/log/vpn-gateway.log` shows "tunnel up" every 5 seconds.** A
 tunnel for VPN Gateway is still on in the WireGuard app (each import adds one, "vpn-gateway (2)" and so on). The two
@@ -913,9 +921,9 @@ other tunnel.
   link), the FortiGate sign-in port 8020, and any local service of yours, such as a development database. Keep
   local services behind a password, and stop VPNs you do not use.
 - **A page link that expires while the page is open.** The link stops working after 12 hours without an API
-  request, and when `./vpn web` stops. An open page asks for the status every few seconds, so it keeps its link
-  alive as long as the tab is open. The link stays in the browser's history. Close the tab and stop `./vpn web`
-  with Ctrl-C when you are done.
+  request, and when `./vpn web` stops. A visible page asks for the status every few seconds, so it keeps its link
+  alive as long as you can see the tab; a hidden tab does not ask. The link stays in the browser's history. Close
+  the tab and stop `./vpn web` with Ctrl-C when you are done.
 - **Unit tests on every change.** CI checks the web page build, Python syntax and the shell scripts
   (`.github/workflows/ci.yml`). The unit tests are not in the repository, so they run by hand, together with image
   builds, real logins and a leak scan.
@@ -1016,7 +1024,7 @@ waits about 30 seconds and then fails.
     after you press **Connect**. Only start a login when you are about to do it.
 - **Your computer reaches every connected organization at once.** If it is compromised, all of them are exposed.
   The firewall stops connections from the organizations, not from your computer. Keep that exposure small:
-  - List single servers (`10.20.0.15`, saved as `/32`) rather than wide ranges, and add `ports` when you need only
+  - List single servers (`10.20.0.15`) rather than wide ranges, and add `ports` when you need only
     a few services.
   - Disconnect VPNs you are not using, or set `idle_minutes` (**Disconnect when idle**).
   - Keep disk encryption, system updates and antivirus on. Prefer SAML sign-in with MFA where the organization

@@ -289,7 +289,8 @@ def build_entry(name, body, existing):
     entry["host"] = host.strip()
     if user and user.strip():
         entry["user"] = user.strip()
-    else:
+    # The page sends no user for gp-saml. One set by hand there guards the sign-in (handler_callback), so it stays.
+    elif "user" in body or not existing or existing.get("method") != method:
         entry.pop("user", None)
     entry.pop("password", None)  # older versions stored it; it is asked at every login now
     entry["subnets"] = [n.strip() for n in subnets]
@@ -560,7 +561,7 @@ class App:
             raise
         os.chmod(str(path), 0o600)
         cli.write_secrets(data)
-        cli.COMPOSE.write_text(json.dumps(cli.render(data), indent=2) + "\n")
+        cli.write_private(cli.COMPOSE, json.dumps(cli.render(data), indent=2) + "\n")
 
     def list_systems(self):
         data, err = self.read_doc()
@@ -948,7 +949,7 @@ class App:
 
     def write_handler_file(self):
         """Write data/secrets/web-handler.json (600) with the port and handler token."""
-        cli.SECRETS_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        cli.private_dir(cli.SECRETS_DIR)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)  # no O_NOFOLLOW on Windows
         fd = os.open(str(self.handler_file()), flags, 0o600)
         try:

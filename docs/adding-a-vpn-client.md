@@ -29,17 +29,19 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       trusts the folder name, not the file content, to know whose data it is. The gateway, the page and
       `./vpn status` read those files only as regular files, never through a symlink; keep it that way.
 - [ ] A subnet the container publishes is used only if `systems.json` lists it for that system
-      (`data/wireguard/route-owners`). Do not bypass that check.
+      (`data/gateway/route-owners`). Do not bypass that check.
 - [ ] `cap_drop: ALL`, then only `cap_add: NET_ADMIN, NET_RAW`, `security_opt: no-new-privileges:true` and the
       devices the client needs (`/dev/net/tun`, `/dev/ppp`). No `privileged`. If the client needs another
       capability, say why in the pull request.
 - [ ] `hub-link.sh` keeps writing `/state/<name>.routes` every 5 seconds. The gateway treats a container whose file
       is older than 15 seconds as stopped and never looks its name up.
 - [ ] A sign-in that arrives without the user's action on the page (a helper, a redirect to a local port) never
-      starts a tunnel by itself: it is held in memory, shown to the user, and expires after 5 minutes.
+      starts a tunnel by itself: it is held in memory, shown to the user, and expires after 5 minutes. The one
+      exception is FortiGate's own redirect to port 8020, which openfortivpn takes directly; the gateway passes it
+      on only for 5 minutes after **Connect**.
 - [ ] If the client needs a callback port (like FortiGate SAML on 8020), it goes through the gateway and is
       published on `127.0.0.1` only. The computer picks which VPN gets it (`cli.claim_saml_port` writes
-      `data/wireguard/saml-target`), never a VPN container; the container only says that its login waits
+      `data/gateway/saml-target`), never a VPN container; the container only says that its login waits
       (`/state/saml-target`).
 
 ### Secrets
@@ -52,7 +54,8 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
 - [ ] Deliver every login line (password, SAML cookie, MFA code) through the FIFO `/run/vpn/in` on a tmpfs
       (`tmpfs: /run/vpn:mode=0700`) with `cli.send_lines()` (`docker exec -i ... cat > /run/vpn/in`). The entrypoint
       creates the FIFO with mode 600 and holds it open read-write, so a later prompt waits for the next line.
-- [ ] A connect always recreates the container (`--force-recreate`), so each login gets a fresh pipe.
+- [ ] A connect that uses the pipe always recreates the container (`--force-recreate`), so each login gets a fresh
+      pipe.
 - [ ] If a SAML page or a cookie passes through the server, it is kept in memory only and served once.
       `/saml/<nonce>` is random, valid for 5 minutes, and served with a sandbox CSP and `no-referrer`.
 

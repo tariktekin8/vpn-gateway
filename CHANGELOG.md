@@ -22,10 +22,11 @@ Nothing yet.
 - **Passwords are never stored.** `gp-password` asks for the password at every connect, on the page or with
   `./vpn login`. Passwords, SAML cookies and MFA codes go into the VPN container through a pipe in memory
   (`/run/vpn/in` on a tmpfs). They never reach a file, the compose file, an argument list, the environment or a
-  log. `systems.json` refuses `password` and other secret fields. MFA codes use the same pipe (the page's **Code**
-  box or `./vpn type <name>`), so they also work on Windows.
-- **The page opens with a one-time link.** `./vpn web` prints `http://127.0.0.1:<port>/#token=...` and opens it.
-  The page itself holds no token. The page keeps the token for its tab only and removes it from the address bar.
+  log. A `password` in `systems.json` is deleted, and other secret fields are refused. MFA codes use the same pipe
+  (the page's **Code** box or `./vpn type <name>`), so they also work on Windows.
+- **The page opens with a link that holds its key.** `./vpn web` prints `http://127.0.0.1:<port>/#token=...` and
+  opens it. The page itself holds no token. The page keeps the token for its tab only and removes it from the
+  address bar.
 - **Port limits per address.** An address may end with `ports 443,3389` (up to 15 ports). The gateway then forwards
   only those TCP and UDP ports.
 - **Disconnect when idle.** `idle_minutes` (1 to 1440), or **Disconnect when idle** on the page, stops a VPN when
@@ -44,7 +45,7 @@ Nothing yet.
   the installer copies `wg` and `wireguard-go` into root-owned `/Library/PrivilegedHelperTools/vpn-gateway/`, and
   the service's `PATH` holds only system folders. It reads its inputs only from regular files you own (no links),
   refuses a `/0` in `AllowedIPs`, and logs only checked values.
-- **The computer picks the FortiGate SAML callback target.** `data/wireguard/saml-target` names the login started
+- **The computer picks the FortiGate SAML callback target.** `data/gateway/saml-target` names the login started
   last; a VPN container can no longer claim another organization's callback.
 - **Sign-in links are checked.** The FortiGate "Authenticate at" link opens only if it is `https://` on the VPN's
   own host and port. A `gp-saml` callback is refused if its cookie or user name holds a line break or other control
@@ -67,8 +68,8 @@ Nothing yet.
   FortiGate links.
 - The gateway, the page and `./vpn status` never read a VPN's state file through a symlink.
 - **The tunnel installer shows what it pins and asks first.** It lists the gateway key, every address range and
-  domain (new ones marked `+`), and the path and SHA-256 of `wg` and `wireguard-go`, then asks `[y/N]` (`--yes`
-  skips it). It runs only system programs, even though `sudo` keeps your `PATH`.
+  domain (new ones marked `+`), and the path and SHA-256 of `tunnel-service`, `wg` and `wireguard-go`, then asks
+  `[y/N]` (`--yes` skips it). It runs only system programs, even though `sudo` keeps your `PATH`.
 - **Sign-ins from the helper wait for your yes.** The page shows `Connect as <user>?` before a `gp-saml` sign-in
   handed over by the sign-in helper starts, and refuses a sign-in for another user than the VPN's `user`. The
   gateway passes the FortiGate port 8020 on only for 5 minutes after **Connect**.
@@ -78,8 +79,8 @@ Nothing yet.
 - The page link stops working after 12 hours without an API request; the terminal then prints a new one.
 - Login cookies in XML form (`<...cookie>value</...cookie>`) are hidden in the logs too.
 - Domain names follow one rule everywhere: each label starts and ends with a letter or digit.
-- Windows: `data\secrets` and `data\wireguard` allow only your user (`icacls`). `./vpn login` deletes the portal's
-  login form from `data/secrets/` once the login is done.
+- Windows: `data\secrets`, `data\wireguard` and `data\gateway` allow only your user (`icacls`). `./vpn login`
+  deletes the portal's login form from `data/secrets/` once the login is done.
 
 ### Added
 
@@ -102,6 +103,11 @@ Nothing yet.
 - Windows: secret and route files were written with CRLF and the local code page, and a VPN container read
   `password\r`. These files are now written as UTF-8 with LF.
 - Windows: the **Local** stop stayed "not checked". It now checks each address's interface.
+- `data/` and the compose file are readable by your user only (modes 700 and 600), also after a first start with
+  `./vpn web`. Another account on the computer could read hosts and user names. An older folder is corrected at the
+  next start.
+- A `user` set by hand for a `gp-saml` VPN stays when you save its **Settings**. It was deleted, and with it the check
+  that refuses another user's sign-in.
 - Mac: with the automatic tunnel installed, the page no longer offers the WireGuard profile download. Importing it
   into the WireGuard app starts a second client with the same key, and the two break each other.
 
@@ -122,8 +128,9 @@ Nothing yet.
   again after you add a VPN, an address outside the pinned ranges or a DNS domain.
 - A subnet wider than `/8`, an IPv6 subnet or a `host` with a path or user name is refused now. `./vpn check` names
   each one.
-- The files the computer writes for the gateway move from `data/wireguard/` to `data/gateway/` by themselves at the
-  next start.
+- The files the computer writes for the gateway move from `data/wireguard/` to `data/gateway/` by themselves. The
+  old gateway does not read them there: until a **Connect** (or `./vpn up`) has replaced it, no VPN passes
+  traffic.
 - The old volume `vpn-gateway_state` is no longer used. Remove it with `docker volume rm vpn-gateway_state`.
 
 ## 1.0.0 (2026-11-18)

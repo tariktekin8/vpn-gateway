@@ -210,9 +210,12 @@ def render(data):
 
 
 def private_dir(path):
-    """Create a folder only this user may open. On Windows mode bits do nothing, so the folder stops inheriting the
-    parent's permissions and gets one rule: full control for the current user."""
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """Create a folder in data/ that only this user may open, and data/ itself. On Windows mode bits do nothing, so the
+    folder stops inheriting the parent's permissions and gets one rule: full control for the current user."""
+    for folder in (path.parent, path):  # one by one: mkdir's mode does not reach the parents it makes
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if sys.platform != "win32":
+            folder.chmod(0o700)  # also a folder an older version made readable for others
     if sys.platform != "win32":
         return
     user, domain = os.environ.get("USERNAME", ""), os.environ.get("USERDOMAIN", "")
@@ -517,7 +520,7 @@ def load():
     if errors:
         sys.exit("systems.json errors:\n  " + "\n  ".join(errors))
     write_secrets(data)
-    COMPOSE.write_text(json.dumps(render(data), indent=2) + "\n")
+    write_private(COMPOSE, json.dumps(render(data), indent=2) + "\n")  # holds hosts and user names
     return {s["name"]: s for s in data["systems"]}
 
 

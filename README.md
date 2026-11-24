@@ -16,7 +16,8 @@ side by side, and one page in your browser shows them all.
 - **One page for everything:** connect, sign in, add a VPN and change its addresses, with no config files.
 - **Only what you choose goes through a VPN:** you list the addresses; your normal internet stays as it is.
 - **See what works:** each address shows three stops, from your computer through the gateway into the VPN.
-- **Mac and Windows:** runs on Docker Desktop and WireGuard, both free. Nothing goes to a cloud service.
+- **Mac and Windows:** runs on Docker Desktop and WireGuard on your own computer, with no cloud service. Only the
+  update check asks GitHub for the newest version.
 
 ## Before you start
 
