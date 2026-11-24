@@ -1,0 +1,43 @@
+# Checks every push and pull request. The unit tests are not in the repository, so they do not run here.
+# Actions are pinned to a commit, not a tag, so a moved tag cannot change what runs.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Web page type check
+        run: |
+          npm ci
+          npm run check
+
+      - name: web/app.js matches a fresh build of web/src/app.ts
+        run: |
+          npm run build
+          git diff --exit-code -- web/app.js
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.9"  # the oldest Python VPN Gateway supports
+
+      - name: Python syntax
+        run: python -m py_compile vpn src/cli.py src/server.py handlers/windows/callback.pyw
+
+      - name: Shell scripts (shellcheck)
+        run: |
+          git ls-files -z | xargs -0 grep -lZ '^#!.*\(sh\|bash\)' | xargs -0 shellcheck --severity=warning

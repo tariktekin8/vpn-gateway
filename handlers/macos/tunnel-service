@@ -99,10 +99,11 @@ apply_dns() {
   if plain_file "$file"; then
     while read -r domain servers; do
       domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')
-      # At least one dot (never a whole top-level domain), only letters, digits, "-" and dots.
-      printf '%s' "$domain" | grep -Eq '^[a-z0-9-]+(\.[a-z0-9-]+)+$' || continue
+      # At least one dot (never a whole top-level domain); each label starts and ends with a letter or digit
+      # (the same rule as src/cli.py's DOMAIN_RE), so a domain can never look like a grep option.
+      printf '%s' "$domain" | grep -Eq -- '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$' || continue
       [ "${#domain}" -le 253 ] || continue
-      if ! grep -Fxq "$domain" "$domains_file" 2>/dev/null; then unpinned="$unpinned $domain"; continue; fi
+      if ! grep -Fxq -- "$domain" "$domains_file" 2>/dev/null; then unpinned="$unpinned $domain"; continue; fi
       body="$MARK"
       good=""
       for s in $servers; do

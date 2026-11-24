@@ -418,6 +418,19 @@ function makeCard(name) {
         "browser to open it at the end and the tunnel starts by itself. Without it, open the pop-up's developer " +
         "tools before you sign in, copy the ", h("code", undefined, "globalprotectcallback:"), " link from the Console at the end, and paste it here.");
     saml.intro.append(h("p", "login-title", "Waiting for your sign-in"), samlFallback, pasteHelp);
+    // A sign-in the helper handed over waits here until the user confirms it: any website can open such a link.
+    const confirm = h("div", "login");
+    confirm.hidden = true;
+    const confirmUser = h("strong");
+    const confirmTitle = h("p", "login-title");
+    confirmTitle.append("Connect as ", confirmUser, "?");
+    const confirmYes = button("Connect", "btn-primary");
+    const confirmNo = button("Cancel");
+    const confirmRow = h("div", "inline");
+    confirmRow.append(confirmYes, confirmNo);
+    const confirmMsg = msgBox();
+    confirm.append(confirmTitle, h("p", "muted", "The sign-in helper received a sign-in for this user. Connect only if you just signed in as " +
+        "this user; otherwise press Cancel."), confirmRow, confirmMsg);
     const pass = makeLoginBlock("login-pass-" + name, "Password", "Connect");
     pass.intro.append(h("p", "login-title", "Enter your password"), h("p", "muted", "Asked at every connect. It goes to the VPN and is never stored on this computer."));
     const typed = makeLoginBlock("login-input-" + name, "Code", "Send");
@@ -458,10 +471,10 @@ function makeCard(name) {
     // Settings
     const settings = makeSettings(name);
     tabs.panels.Settings.append(settings.root);
-    root.append(head, msg, error, pass.form, saml.form, forti, typed.form, tabs.bar, ...Object.values(tabs.panels));
+    root.append(head, msg, error, pass.form, confirm, saml.form, forti, typed.form, tabs.bar, ...Object.values(tabs.panels));
     const card = {
         name, pending: null, root, dot, state, kind, power, msg, error,
-        saml, samlFallback, samlFallbackText, samlFallbackLink, typed, pass, passOpen: false, forti, fortiLink,
+        saml, confirm, confirmUser, confirmMsg, samlFallback, samlFallbackText, samlFallbackLink, typed, pass, passOpen: false, forti, fortiLink,
         fortiNotice,
         tabs, addrBody, addrMsg, addrInput, namesBody, logs, settings, needsAction: false,
         popup: null, popupUrl: null, popupBlocked: false, popupClosed: false, popupAfter: Infinity, gpAwaitSeen: false,
@@ -477,6 +490,8 @@ function makeCard(name) {
             fillSettings(card.settings, systems.find((s) => s.name === name) ?? null);
     };
     logs.open = tabs.current === "Logs";
+    confirmYes.addEventListener("click", () => void confirmSignIn(card, true, confirmYes, confirmNo)); // sends the name shown
+    confirmNo.addEventListener("click", () => void confirmSignIn(card, false, confirmYes, confirmNo));
     power.addEventListener("click", () => {
         if (power.dataset.action === "stop")
             void stopSystem(card);
@@ -938,7 +953,10 @@ function renderCard(card) {
         card.settings.remove.disabled = Boolean(busyText);
     setText(card.error, st?.error ? "Error: " + st.error : "");
     show(card.error, Boolean(st?.error));
-    show(card.saml.form, Boolean(login?.kind === "gp-saml" && login.awaiting_callback));
+    const confirmUser = login?.kind === "gp-saml" && typeof login.confirm_user === "string" ? login.confirm_user : "";
+    setText(card.confirmUser, confirmUser);
+    show(card.confirm, Boolean(confirmUser));
+    show(card.saml.form, Boolean(login?.kind === "gp-saml" && login.awaiting_callback) && !confirmUser);
     show(card.typed.form, Boolean(login?.kind === "gp-password" && login.awaiting_input));
     if (running)
         card.passOpen = false;
@@ -1395,6 +1413,30 @@ async function sendLogin(card, block, action, key, emptyText) {
     else {
         showError(block.msg, r);
     }
+    void refresh("status", true);
+}
+// The user's answer to a sign-in the helper handed over.
+async function confirmSignIn(card, accept, yes, no) {
+    clearMsg(card.confirmMsg);
+    yes.disabled = no.disabled = true;
+    let r;
+    try {
+        // The name the user saw goes along: the server starts the sign-in only if it is still that one.
+        const body = accept ? { accept, user: card.confirmUser.textContent ?? "" } : { accept };
+        r = await api("POST", sysPath(card.name, "confirm"), body);
+    }
+    finally {
+        yes.disabled = no.disabled = false;
+    }
+    if (!r.ok)
+        showError(card.confirmMsg, r);
+    else if (accept) {
+        showInfo(card.msg, "Confirmed. The tunnel is starting.");
+        closePopup(card);
+        show(card.samlFallback, false);
+    }
+    else
+        showInfo(card.msg, "Sign-in dropped. Press Connect to sign in again.");
     void refresh("status", true);
 }
 // Save a VPN's addresses; the server applies them to a connected VPN at once.

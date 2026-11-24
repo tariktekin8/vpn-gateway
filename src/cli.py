@@ -8,6 +8,7 @@ Usage:
   ./vpn type <name>      send one more answer (an MFA code) to a system that waits for it
   ./vpn status           container and tunnel state per system
   ./vpn down [name...]   stop containers (all if no name)
+  ./vpn rotate-keys      stop everything and make new WireGuard keys at the next gateway start
   ./vpn web [--port N]   start the web page on 127.0.0.1 (default port 8765)
 
 The gateway container always runs with them: it is the WireGuard server for the Mac and writes the
@@ -40,6 +41,10 @@ SYSTEMS = DATA / "systems.json"
 COMPOSE = DATA / "docker-compose.generated.json"  # JSON is valid YAML, so compose reads it as is
 SECRETS_DIR = DATA / "secrets"
 WG_PROFILE = DATA / "wireguard" / "mac.conf"  # holds the Mac private key: 600
+# What this computer tells the gateway (routes, owners, port limits, the SAML target). The gateway mounts it
+# read-only at /config; data/wireguard (/keys) holds only what the gateway writes: its keys, mac.conf and dns.
+GATEWAY_CONFIG = DATA / "gateway"
+CONFIG_FILES = ("static-routes", "route-owners", "dns-owners", "port-limits", "saml-target")
 # Paths inside the compose file are relative to its folder, data/.
 GATEWAY = "gateway"
 PROJECT = "vpn-gateway"
@@ -184,11 +189,15 @@ def render(data):
         # Docker's DNS answers the VPN containers' names itself and forwards other names to this server, where nothing
         # listens: the gateway never asks the local network's DNS, which could answer a stopped VPN's name.
         "dns": ["127.0.0.1"],
-        "cap_add": ["NET_ADMIN"],
+        # WireGuard, routes and the firewall; dnsmasq binds port 53 and then runs as nobody.
+        "cap_drop": ["ALL"],
+        "cap_add": ["NET_ADMIN", "NET_RAW", "NET_BIND_SERVICE", "SETUID", "SETGID"],
         "security_opt": ["no-new-privileges:true"],
         "sysctls": {"net.ipv4.ip_forward": "1"},
         # Each VPN's state at /state/<name>/, read-only: the folder name, not the file, says which VPN wrote it.
-        "volumes": [f"state-{s['name']}:/state/{s['name']}:ro" for s in data["systems"]] + ["./wireguard:/keys"],
+        # ./wireguard: what the gateway writes (keys, mac.conf, dns). ./gateway: what this computer writes, read-only.
+        "volumes": [f"state-{s['name']}:/state/{s['name']}:ro" for s in data["systems"]]
+                   + ["./wireguard:/keys", "./gateway:/config:ro"],
         # "default" holds the published ports and the default route; one more network per VPN.
         "networks": {"default": {"gw_priority": 1}, **{f"net-{s['name']}": {} for s in data["systems"]}},
         # 51820: WireGuard. 8020: FortiGate SAML callbacks, passed to the forti-saml system that is logging in.
@@ -200,10 +209,30 @@ def render(data):
             "volumes": {f"state-{n}": {} for n in names}, "networks": {f"net-{n}": {} for n in names}}
 
 
+def private_dir(path):
+    """Create a folder only this user may open. On Windows mode bits do nothing, so the folder stops inheriting the
+    parent's permissions and gets one rule: full control for the current user."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if sys.platform != "win32":
+        return
+    user, domain = os.environ.get("USERNAME", ""), os.environ.get("USERDOMAIN", "")
+    if not user:
+        print(f"warning: could not limit {path} to your user (USERNAME is not set)", file=sys.stderr)
+        return
+    principal = f"{domain}\\{user}" if domain else user
+    r = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:(OI)(CI)F"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"warning: could not limit {path} to your user: {r.stderr.strip() or r.stdout.strip()}", file=sys.stderr)
+
+
 def write_secrets(data):
     """Prepare data/ for the containers: folders and the gateway's static routes. No password or cookie."""
-    SECRETS_DIR.mkdir(mode=0o700, exist_ok=True)
-    WG_PROFILE.parent.mkdir(mode=0o700, exist_ok=True)  # gateway keys and Mac profile
+    private_dir(SECRETS_DIR)
+    private_dir(WG_PROFILE.parent)  # gateway keys and Mac profile
+    private_dir(GATEWAY_CONFIG)
+    for name in CONFIG_FILES:  # older versions kept these next to the keys, where the gateway could change them
+        WG_PROFILE.with_name(name).unlink(missing_ok=True)
     write_static_routes(data)
 
 
@@ -348,12 +377,13 @@ def subnets_env(system):
 
 # The Mac's FortiGate SAML callback port (8020) goes to the forti-saml login started last. This side picks it, not
 # the VPN containers: a container that is taken over could otherwise claim another organization's login.
-# data/wireguard/saml-target is /keys/saml-target in the gateway (docker/gateway/saml-forward.sh).
+# data/gateway/saml-target is /config/saml-target in the gateway (docker/gateway/saml-forward.sh), which passes the
+# callback on only for five minutes after this file was written.
 def claim_saml_port(systems, names):
     """Give port 8020 to the last forti-saml system in names, if any."""
     forti = [n for n in names if systems[n]["method"] == "forti-saml"]
     if forti:
-        path = WG_PROFILE.with_name("saml-target")
+        path = GATEWAY_CONFIG / "saml-target"
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_bytes(f"{forti[-1]}\n".encode("utf-8"))
@@ -363,39 +393,39 @@ def claim_saml_port(systems, names):
 def saml_port_holder():
     """The system that holds port 8020, or ""."""
     try:
-        name = WG_PROFILE.with_name("saml-target").read_text(encoding="utf-8").strip()
+        name = (GATEWAY_CONFIG / "saml-target").read_text(encoding="utf-8").strip()
     except OSError:
         return ""
     return name if NAME_RE.fullmatch(name) else ""
 
 
 def write_static_routes(data):
-    """List every subnet from systems.json for the gateway (mounted at /keys/static-routes).
+    """List every subnet from systems.json for the gateway (data/gateway, mounted read-only at /config).
 
     The Mac profile always holds these, connected or not, so it changes only when systems.json does.
     Systems without subnets still add the routes their VPN pushes while connected.
     """
     nets = sorted({n for s in data["systems"] for n in configured_subnets(s)})
-    path = WG_PROFILE.with_name("static-routes")
+    path = GATEWAY_CONFIG / "static-routes"
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(n + "\n" for n in nets).encode("utf-8"))  # LF, read by the Linux gateway
     tmp.replace(path)
     # "subnet name": the gateway routes a subnet only to the VPN it belongs to, whatever another VPN publishes.
     owners = sorted(f"{n} {s['name']}" for s in data["systems"] for n in configured_subnets(s))
-    path = WG_PROFILE.with_name("route-owners")
+    path = GATEWAY_CONFIG / "route-owners"
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
     tmp.replace(path)
     # "domain name": the only domains the computer resolves through that VPN's DNS (docker/gateway/entrypoint.sh).
     owners = sorted(f"{d} {s['name']}" for s in data["systems"] for d in s.get("domains", []))
-    path = WG_PROFILE.with_name("dns-owners")
+    path = GATEWAY_CONFIG / "dns-owners"
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(line + "\n" for line in owners).encode("utf-8"))
     tmp.replace(path)
     # "subnet port,port": the gateway forwards only to these ports there. Subnets not listed: every port.
     limits = sorted(f"{parse_subnet(n)[1]} {','.join(map(str, subnet_ports(n)))}"
                     for s in data["systems"] for n in s.get("subnets", []) if n != "TODO" and subnet_ports(n))
-    path = WG_PROFILE.with_name("port-limits")
+    path = GATEWAY_CONFIG / "port-limits"
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes("".join(line + "\n" for line in limits).encode("utf-8"))
     tmp.replace(path)
@@ -535,6 +565,23 @@ def main(argv):
         if not rc:
             print(f"Mac WireGuard profile: {WG_PROFILE.relative_to(ROOT)}")
         return rc
+    if cmd == "rotate-keys":
+        if args not in ([], ["--yes"]):
+            sys.exit("usage: ./vpn rotate-keys [--yes]")
+        if not args and input("This stops every VPN and the gateway, and makes new WireGuard keys at the next "
+                              "start. Type yes to go on: ").strip().lower() != "yes":
+            print("Nothing changed.")
+            return 1
+        rc = compose("down")
+        if rc:
+            return rc
+        for path in (WG_PROFILE.with_name("server.key"), WG_PROFILE.with_name("mac.key"), WG_PROFILE):
+            path.unlink(missing_ok=True)  # the gateway makes new keys and a new profile when it starts
+        print("The old keys are deleted. Next:\n"
+              "  1. Start the gateway (on the page, or ./vpn up).\n"
+              "  2. Import the new profile in the WireGuard app, or on a Mac with the automatic tunnel run:\n"
+              "     sudo handlers/macos/install-tunnel.sh")
+        return 0
     if cmd == "down":
         names = pick(systems, args)
         return compose("rm", "-sf", *names) if names else compose("down")

@@ -1,14 +1,15 @@
 #!/bin/bash
-# WireGuard server for the Mac. Only the subnets from systems.json (/keys/static-routes, written by the CLI) are
+# WireGuard server for the Mac. Only the subnets from systems.json (/config/static-routes, written by the CLI) are
 # reachable: they are the Mac profile's AllowedIPs, the firewall's allow-list, and the only routes. Each one goes
 # to the VPN container that publishes it in /state while that VPN is connected, and nowhere otherwise (never out
 # through Docker's internet connection). Nothing on the VPN side can open a connection to the Mac.
 # It also writes /keys/dns ("domain server..." lines) for the macOS tunnel service: the domains approved for each
-# VPN (/keys/dns-owners), with the DNS servers that VPN pushed inside its own subnets, or this gateway while it is off.
+# VPN (/config/dns-owners), with the DNS servers that VPN pushed inside its own subnets, or this gateway while it is off.
 set -euo pipefail
 umask 077
 
-KEYS=/keys
+KEYS=/keys      # written by the gateway: server.key, mac.key, mac.conf, dns
+CONFIG=/config  # written by the computer, read-only here: static-routes, route-owners, dns-owners, port-limits
 WG_NET=10.200.0.0/24
 MAC_IP=10.200.0.2
 
@@ -91,8 +92,8 @@ last_allowed=""
 last_static="-"
 last_dns="-"  # never a real value, so the first round always writes the file
 while :; do
-  static=$(cat "$KEYS/static-routes" 2>/dev/null || true)
-  limits=$(cat "$KEYS/port-limits" 2>/dev/null || true)  # "subnet port,port": only these ports there
+  static=$(cat "$CONFIG/static-routes" 2>/dev/null || true)
+  limits=$(cat "$CONFIG/port-limits" 2>/dev/null || true)  # "subnet port,port": only these ports there
   if [ "$static|$limits" != "$last_static" ]; then
     declare -A ports=()
     while read -r net list; do [ -n "$net" ] && ports[$net]=$list; done <<< "$limits"
@@ -110,7 +111,7 @@ while :; do
     last_static="$static|$limits"
   fi
   declare -A want=() owner=()
-  while read -r net who; do [ -n "$net" ] && owner[$net]=$who; done < <(cat "$KEYS/route-owners" 2>/dev/null || true)
+  while read -r net who; do [ -n "$net" ] && owner[$net]=$who; done < <(cat "$CONFIG/route-owners" 2>/dev/null || true)
   for net in $static; do want[$net]=unreachable; done  # no VPN connected for it: drop, never fall back to the internet
   for f in /state/*/*.routes; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue  # a VPN container could point a symlink at /keys/*.key
@@ -144,18 +145,18 @@ while :; do
   # A VPN that is off (or pushed no usable server) gets this gateway's dnsmasq, which answers "no such name":
   # the lookup fails at once instead of sending the internal name to the computer's normal DNS.
   dns=""
-  for name in $(awk '{ print $2 }' "$KEYS/dns-owners" 2>/dev/null | grep -E '^[a-z][a-z0-9-]{0,30}$' | sort -u); do
+  for name in $(awk '{ print $2 }' "$CONFIG/dns-owners" 2>/dev/null | grep -E '^[a-z][a-z0-9-]{0,30}$' | sort -u); do
     servers=""
     f="/state/$name/$name.dns"
     if [ -f "$f" ] && [ ! -L "$f" ] && alive "$name"; then
-      awk -v n="$name" '$2 == n { print $1 }' "$KEYS/route-owners" 2>/dev/null > /tmp/own-nets || true
+      awk -v n="$name" '$2 == n { print $1 }' "$CONFIG/route-owners" 2>/dev/null > /tmp/own-nets || true
       for ip in $(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }' "$f"); do
         inside "$ip" /tmp/own-nets && servers+=" $ip"
       done
     fi
     [ -n "$servers" ] || servers=" 10.200.0.1"
-    for domain in $(awk -v n="$name" '$2 == n { print $1 }' "$KEYS/dns-owners" 2>/dev/null |
-                    grep -E '^[a-z0-9-]+(\.[a-z0-9-]+)+$'); do
+    for domain in $(awk -v n="$name" '$2 == n { print $1 }' "$CONFIG/dns-owners" 2>/dev/null |
+                    grep -E -- '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'); do  # the same rule as src/cli.py's DOMAIN_RE
       dns+="$domain$servers"$'\n'
     done
   done

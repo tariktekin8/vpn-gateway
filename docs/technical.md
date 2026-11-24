@@ -316,8 +316,9 @@ answers to `data/systems.json`; nothing else needs to be configured by hand.
      closes by itself when you are connected.
      For GlobalProtect sign-in pages (`gp-saml`), install a small helper once so this works by itself:
      on a Mac, the [sign-in helper (Mac)](#sign-in-helper-mac); on Windows, the
-     [sign-in helper (Windows)](#sign-in-helper-windows). Without the helper, the VPN's page shows you how to copy
-     a link by hand.
+     [sign-in helper (Windows)](#sign-in-helper-windows). When the helper hands the sign-in over, the VPN's page
+     asks `Connect as <user>?`: press **Connect** only if that is the account you just signed in with. Without the
+     helper, the VPN's page shows you how to copy a link by hand.
 4. A green dot means connected. Anything that needs you (a sign-in, an error, an address that does not work) shows
    in a strip at the top of the page, with a button that takes you there.
 
@@ -645,6 +646,9 @@ link for you, so you skip steps 2, 4 and 5. The command line always asks you to 
 2. Log in as usual. At the end FortiGate sends the browser to `http://127.0.0.1:8020/`. The gateway serves that port
    and passes it to the FortiGate system whose login runs now, so several `forti-saml` systems work, one login at
    a time: the last one started gets the port. VPN Gateway on your computer picks it, never a VPN container.
+   The gateway connects a browser connection to the VPN only once its request arrives: browsers open spare
+   connections ahead of time, and openfortivpn serves one connection at a time, so an idle spare would hold the
+   sign-in back for about a minute. A connection that sends nothing for 60 seconds is closed.
   Nothing to copy.
 
 ## Everyday commands
@@ -656,6 +660,7 @@ link for you, so you skip steps 2, 4 and 5. The command line always asks you to 
 ./vpn type <name>      # send a code (MFA) to a system that asks for one
 ./vpn status           # container, tunnel and route state per system
 ./vpn down [name...]   # stop containers (all if no name)
+./vpn rotate-keys      # stop everything and make new WireGuard keys at the next gateway start
 docker logs -f vpn-<name>   # follow one VPN's log
 ```
 
@@ -677,7 +682,8 @@ handlers/macos/install.sh --take-over    # the same, and make it the default eve
 handlers/macos/uninstall.sh              # unregister and delete it
 ```
 
-- The first time a login hands over a link, the browser asks "Open VPN Gateway Callback?". Allow it.
+- The first time a login hands over a link, the browser asks "Open VPN Gateway Callback?". Allow it. The VPN's
+  page then asks `Connect as <user>?`; press **Connect** if that is your account.
 - If the official GlobalProtect app is installed, it owns `globalprotectcallback:` links. `install.sh` then
   installs VPN Gateway Callback without making it the default, unless you pass `--take-over`.
   **Taking over breaks the official app's browser login** until you run `handlers/macos/uninstall.sh`.
@@ -738,15 +744,21 @@ sudo handlers/macos/uninstall-tunnel.sh      # remove it
     shows only checked values and only root can read it.
   - A program running as you that runs its own WireGuard server with the gateway's key could answer the pinned
     domains and take the traffic to the pinned addresses. It cannot reach any other name or address.
+- Before it changes anything, the installer lists what the service will trust: the gateway's public key, every
+  address range, every domain, and the path and SHA-256 of the `wg` and `wireguard-go` it copies. Lines marked `+`
+  are new since the last install, `-` go away. It asks `Install with these? [y/N]` on the terminal; anything but
+  yes changes nothing. `--yes` skips the question. Check the `+` lines: a program running as you could have added
+  a range or a domain to `data/wireguard/` before you ran it.
 - Run `install-tunnel.sh` again if you move the project folder (the service holds the path of
   `data/wireguard/mac.conf`), after `brew upgrade` updates `wireguard-tools` or `wireguard-go` (the service runs
   its own copies), and after the gateway gets new keys (the log then says "profile refused").
 - The installer trusts what it finds when you run it: the `wg` and `wireguard-go` files in Homebrew's folders, and
-  the gateway key, the addresses and the domains in `data/wireguard/`. It prints how many it pinned. Run it right after `brew install` and after **Start the gateway**, not after you
-  ran programs you do not trust.
-- To make new WireGuard keys: stop all connections, delete `data/wireguard/server.key` and
-  `data/wireguard/mac.key`, start the gateway, then import the new profile in the WireGuard app or run
-  `install-tunnel.sh` again.
+  the gateway key, the addresses and the domains in `data/wireguard/`, which it shows you. Run it right after
+  `brew install` and after **Start the gateway**, not after you ran programs you do not trust. `sudo` keeps your
+  `PATH`, so the installer itself runs only system programs.
+- To make new WireGuard keys, run `./vpn rotate-keys`. It stops every VPN and the gateway and deletes the keys and
+  the profile. Then start the gateway, and import the new profile in the WireGuard app or run `install-tunnel.sh`
+  again.
 
 ## Windows specifics
 
@@ -754,8 +766,10 @@ Everything else works the same way on Windows.
 
 - Commands: `.\vpn.cmd` in place of `./vpn`.
 - Names: NRPT rules instead of `/etc/resolver` (see [Reaching servers by name](#reaching-servers-by-name)).
-- Files: Windows has no `chmod 600`. `data\` (settings and WireGuard keys) stays private because files in your
-  user folder are readable only by you and the administrators. Keep the project there.
+- Files: Windows has no `chmod 600`. VPN Gateway creates `data\secrets` and `data\wireguard` with `icacls`: they
+  stop inheriting the parent folder's permissions and allow only your user (full control). It prints a warning if
+  `icacls` fails. Keep the project in your user folder. If Docker Desktop cannot read `data\wireguard` afterwards,
+  report it.
 
 ### Sign-in helper (Windows)
 
@@ -772,7 +786,8 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
 - If the official GlobalProtect app is installed, `install.ps1` changes nothing unless you pass `-TakeOver`.
   **Taking over breaks the official app's browser login** until you run `handlers\windows\uninstall.ps1`.
 - The registry entry holds the absolute path of the script. Run `install.ps1` again if you move the folder.
-- The first time a login hands over a link, the browser asks whether to open it. Allow it.
+- The first time a login hands over a link, the browser asks whether to open it. Allow it. The VPN's page then asks
+  `Connect as <user>?`; press **Connect** if that is your account.
 
 ## How it works
 
@@ -817,8 +832,9 @@ powershell -ExecutionPolicy Bypass -File handlers\windows\uninstall.ps1         
     ├── systems.json           your VPNs (no passwords)
     ├── docker-compose.generated.json
     ├── secrets/               web-handler.json while vpn web runs; the portal's login form during ./vpn login
-    └── wireguard/             server.key, mac.key, mac.conf, static-routes, route-owners, port-limits,
-                               dns-owners, dns, saml-target
+    ├── gateway/               written by this computer, read-only in the gateway (/config): static-routes,
+    │                          route-owners, dns-owners, port-limits, saml-target
+    └── wireguard/             written by the gateway (/keys): server.key, mac.key, mac.conf, dns
 ```
 
 ## Troubleshooting
@@ -896,12 +912,14 @@ other tunnel.
   container taken over through a bug in its VPN client could reach them: the web page (it still needs the page's
   link), the FortiGate sign-in port 8020, and any local service of yours, such as a development database. Keep
   local services behind a password, and stop VPNs you do not use.
-- **A page link that expires.** The link works while `./vpn web` runs, and it stays in the browser's history. Stop
-  `./vpn web` with Ctrl-C when you are done; the link then stops working.
-- **Automatic checks of each change.** There is no CI. Changes are checked by hand: tests, image builds, real
-  logins and a leak scan.
-- **Keys that change by themselves.** The WireGuard keys stay the same until you make new ones (see
-  [Automatic tunnel (Mac)](#automatic-tunnel-mac) for how).
+- **A page link that expires while the page is open.** The link stops working after 12 hours without an API
+  request, and when `./vpn web` stops. An open page asks for the status every few seconds, so it keeps its link
+  alive as long as the tab is open. The link stays in the browser's history. Close the tab and stop `./vpn web`
+  with Ctrl-C when you are done.
+- **Unit tests on every change.** CI checks the web page build, Python syntax and the shell scripts
+  (`.github/workflows/ci.yml`). The unit tests are not in the repository, so they run by hand, together with image
+  builds, real logins and a leak scan.
+- **Keys that change by themselves.** The WireGuard keys stay the same until you run `./vpn rotate-keys`.
 - **Permission from the organization.** VPN Gateway does not check an organization's rules for you. Following them
   is your responsibility: see [Before you start](#before-you-start).
 - **A device health report or a managed device.** VPN Gateway does not send a GlobalProtect HIP report and does not
@@ -944,6 +962,10 @@ waits about 30 seconds and then fails.
 - VPN containers run with only the capabilities a VPN client needs (`NET_ADMIN`, `NET_RAW`) and with
   `no-new-privileges`. Their firewall drops connections from the VPN side to the container itself, for IPv4 and
   IPv6.
+- The gateway runs with `NET_ADMIN`, `NET_RAW`, `NET_BIND_SERVICE`, `SETUID` and `SETGID` only (dnsmasq binds port
+  53 and then runs as `nobody`), with `no-new-privileges`, and without any DNS server behind it. It reads what this
+  computer writes (routes, owners, port limits, the SAML target) from `data/gateway/`, mounted read-only, and writes
+  only its keys, the profile and the DNS file to `data/wireguard/`.
 - WireGuard private keys stay in `data/wireguard/` (mode 600). `mac.conf` and the downloaded `vpn-gateway.conf`
   contain your computer's private key: do not share them.
 - GlobalProtect may ask for a device health report (HIP). VPN Gateway does not send one, so the organization's
@@ -954,8 +976,10 @@ waits about 30 seconds and then fails.
   are installed at build time, so a rebuild takes their security updates. To see what an image holds:
   `docker run --rm --entrypoint dpkg vpn-gateway -l`. To move to a newer Debian image, replace the digest with
   the one `docker buildx imagetools inspect debian:bookworm-slim` shows.
-- Container logs show what the VPN clients print, except login cookies: the value of every `...cookie=value` is
-  replaced with `<hidden>` before it reaches the log (`docker/common/hide-cookies.sh`). The logs still hold host
+- Container logs show what the VPN clients print, except login cookies: the value of every `...cookie=value` and
+  `<...cookie>value</...cookie>` is replaced with `<hidden>` before it reaches the log
+  (`docker/common/hide-cookies.sh`). A cookie line that the client writes in two parts more than 0.2 seconds apart
+  would not be hidden; the clients write such lines in one go. The logs still hold host
   names, addresses and your user name: check them before you share them.
 - Web page:
   - At startup the server makes a random token. It prints it only in the link `http://127.0.0.1:<port>/#token=...`
@@ -964,7 +988,8 @@ waits about 30 seconds and then fails.
   - The page reads the token from the link, keeps it in `sessionStorage` (this tab only, kept across a reload) and
     removes it from the address bar. Every `/api/` request must send it in `X-Gateway-Token`. A restart makes a
     new token: open the new link. The browser's history may still list the old link; it stops working when the
-    server stops.
+    server stops. After 12 hours without an API request the server also makes a new token and prints the new link
+    in the terminal.
   - The `Host` header must be `127.0.0.1:<port>` or `localhost:<port>`, and an `Origin` header, if any, must
     match it. This blocks other websites and DNS rebinding. No CORS headers are sent. The page's
     Content-Security-Policy allows only its own scripts, styles and forms (`base-uri 'none'`,
@@ -983,10 +1008,12 @@ waits about 30 seconds and then fails.
     still read it from the Terminal or the browser. Run `./vpn web` only when you need it and stop it with Ctrl-C
     afterwards.
   - Any website can try to open a `globalprotectcallback:` link. While a `gp-saml` login waits, a forged link would
-    replace your login with someone else's session for that VPN host. The sign-in helper's link is taken only in
-    the first 5 minutes after you press **Connect**; later, paste the link on the VPN's page. A FortiGate login
-    can be disturbed the same way through `http://127.0.0.1:8020/` while it waits. Only start a login when you are
-    about to do it.
+    replace your login with someone else's session for that VPN host. So the sign-in helper's link is taken only in
+    the first 5 minutes after you press **Connect**, and it starts nothing: the page shows `Connect as <user>?`
+    and waits for your yes (for 5 minutes, in memory only). If the VPN has a `user` in `systems.json`, a link for
+    another user is refused. A link you paste on the page yourself starts at once. A FortiGate login can be
+    disturbed the same way through `http://127.0.0.1:8020/`; the gateway passes that port on only for 5 minutes
+    after you press **Connect**. Only start a login when you are about to do it.
 - **Your computer reaches every connected organization at once.** If it is compromised, all of them are exposed.
   The firewall stops connections from the organizations, not from your computer. Keep that exposure small:
   - List single servers (`10.20.0.15`, saved as `/32`) rather than wide ranges, and add `ports` when you need only

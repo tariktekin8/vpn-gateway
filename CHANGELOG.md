@@ -65,11 +65,26 @@ Nothing yet.
 - The sign-in helper's `gp-saml` callback is taken only in the first 5 minutes of a login. The page's
   Content-Security-Policy adds `base-uri 'none'` and `form-action 'self'`, and the page opens only `https://`
   FortiGate links.
-- The gateway, the page and `./vpn status` never read a VPN's state file through a symlink. `./vpn login` deletes the portal's
+- The gateway, the page and `./vpn status` never read a VPN's state file through a symlink.
+- **The tunnel installer shows what it pins and asks first.** It lists the gateway key, every address range and
+  domain (new ones marked `+`), and the path and SHA-256 of `wg` and `wireguard-go`, then asks `[y/N]` (`--yes`
+  skips it). It runs only system programs, even though `sudo` keeps your `PATH`.
+- **Sign-ins from the helper wait for your yes.** The page shows `Connect as <user>?` before a `gp-saml` sign-in
+  handed over by the sign-in helper starts, and refuses a sign-in for another user than the VPN's `user`. The
+  gateway passes the FortiGate port 8020 on only for 5 minutes after **Connect**.
+- **Tighter gateway.** The gateway keeps only `NET_ADMIN`, `NET_RAW`, `NET_BIND_SERVICE`, `SETUID` and `SETGID`.
+  What the computer writes for it moved to `data/gateway/`, mounted read-only; `data/wireguard/` keeps only what the
+  gateway writes.
+- The page link stops working after 12 hours without an API request; the terminal then prints a new one.
+- Login cookies in XML form (`<...cookie>value</...cookie>`) are hidden in the logs too.
+- Domain names follow one rule everywhere: each label starts and ends with a letter or digit.
+- Windows: `data\secrets` and `data\wireguard` allow only your user (`icacls`). `./vpn login` deletes the portal's
   login form from `data/secrets/` once the login is done.
 
 ### Added
 
+- `./vpn rotate-keys`: stop everything and make new WireGuard keys at the next gateway start.
+- CI (`.github/workflows/ci.yml`): web page build, Python syntax and shellcheck on every push.
 - Security sections in `README.md` and `docs/technical.md`: what VPN Gateway gives you and what it cannot give you.
 - Setup flowcharts for Mac and Windows in `docs/technical.md`. `README.md` is now a short summary.
 - `docs/adding-a-vpn-client.md`: the security checklist for a new VPN client or login method.
@@ -79,6 +94,9 @@ Nothing yet.
 
 ### Fixed
 
+- FortiGate SAML: after the sign-in the browser waited about a minute, unless you clicked the "Authenticate at"
+  link. A spare connection the browser opened early held openfortivpn's listener. The gateway now passes a
+  connection on only once its request arrives.
 - Windows: the page stayed on "Loading..." because the registry mapped `.js` to `text/plain`. Web files are now
   served with fixed content types.
 - Windows: secret and route files were written with CRLF and the local code page, and a VPN container read
@@ -104,6 +122,8 @@ Nothing yet.
   again after you add a VPN, an address outside the pinned ranges or a DNS domain.
 - A subnet wider than `/8`, an IPv6 subnet or a `host` with a path or user name is refused now. `./vpn check` names
   each one.
+- The files the computer writes for the gateway move from `data/wireguard/` to `data/gateway/` by themselves at the
+  next start.
 - The old volume `vpn-gateway_state` is no longer used. Remove it with `docker volume rm vpn-gateway_state`.
 
 ## 1.0.0 (2026-11-18)

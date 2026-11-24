@@ -50,6 +50,7 @@ HANDLER_FILE = "web-handler.json"  # in data/secrets/: port and handler token fo
 # Present when handlers/macos/install-tunnel.sh runs the tunnel as a service: profile changes then apply by themselves.
 TUNNEL_SERVICE = Path("/Library/LaunchDaemons/com.athenayazilim.vpn-gateway.tunnel.plist")
 SAML_PAGE_TTL = 300  # seconds a one-time /saml/<nonce> page lives
+TOKEN_IDLE = 12 * 3600  # seconds without an API request after which the page link stops working
 AWAIT_TTL = 300  # seconds a gp-saml login accepts the sign-in helper's callback; afterwards only a pasted link
 GATEWAY = cli.GATEWAY
 AUTH_RE = re.compile(r"Authenticate at\s+(\S+)")
@@ -376,8 +377,14 @@ class App:
         self.ops = {}  # target -> {"busy": None|"starting"|"stopping", "error": None|str}
         self.awaiting = set()  # gp-saml systems waiting for the callback URL
         self.awaiting_since = {}  # name -> clock() when its login started
+        # name -> (user, usergroup, cookie, expiry): a sign-in the helper handed over, held in memory until the user
+        # confirms it on the page. Never shown (except the user name), logged or written.
+        self.pending = {}
         self.saml_pages = {}  # nonce -> (html bytes, expiry, system name); memory only, one use
         self.clock = time.monotonic
+        self.token_lock = threading.Lock()
+        self.wall = time.time  # the page token's idle time counts while the computer sleeps, unlike clock()
+        self.token_used = self.wall()
         self.threads = []
         self.new_release = None  # set by check_update when a newer release exists
         self.set_port(port)
@@ -418,8 +425,7 @@ class App:
             raise HttpError(403, {"error": "forbidden origin"})
         route, _, query = path.partition("?")
         if route == "/api" or route.startswith("/api/"):
-            if not same_token(hdrs.get(TOKEN_HEADER, ""), self.token):
-                raise HttpError(403, {"error": "missing or wrong token"})
+            self.check_token(hdrs.get(TOKEN_HEADER, ""))
             return self.api(method, route, query, json_body(method, hdrs, body))
         if route == "/handler/callback":
             if not same_token(hdrs.get(HANDLER_TOKEN_HEADER, ""), self.handler_token):
@@ -432,6 +438,21 @@ class App:
         if route.startswith("/saml/"):  # a popup cannot send the token; the one-time nonce takes its place
             return self.serve_saml_page(route[len("/saml/"):])
         return self.static(route)
+
+    def check_token(self, given):
+        """The page token works until it goes TOKEN_IDLE seconds without an API request; then a new link is printed.
+        An open page asks for the status every few seconds, so it keeps its link alive."""
+        with self.token_lock:
+            if not same_token(given, self.token):
+                raise HttpError(403, {"error": "missing or wrong token"})
+            now = self.wall()
+            if not 0 <= now - self.token_used <= TOKEN_IDLE:  # also when the clock went back
+                self.token = secrets.token_urlsafe(32)
+                self.token_used = now
+                print(f"The page link was not used for {TOKEN_IDLE // 3600} hours and stopped working. New link:\n"
+                      f"http://127.0.0.1:{self.port}/#token={self.token}", flush=True)
+                raise HttpError(403, {"error": "missing or wrong token"})
+            self.token_used = now
 
     def api(self, method, route, query, payload):
         parts = route.split("/")[2:]
@@ -458,6 +479,7 @@ class App:
             routes = {"start": {"POST": lambda: self.start(name, payload)},
                       "stop": {"POST": lambda: self.stop(name)},
                       "callback": {"POST": lambda: self.callback(name, payload)},
+                      "confirm": {"POST": lambda: self.confirm(name, payload)},
                       "input": {"POST": lambda: self.send_input(name, payload)},
                       "logs": {"GET": lambda: self.logs_system(name, query)}}.get(parts[2])
         if routes is None:
@@ -668,6 +690,7 @@ class App:
                 with self.state_lock:
                     self.ops.pop(name, None)
                     self.awaiting.discard(name)
+                    self.pending.pop(name, None)
                     self._drop_pages(name)
             self.save(new)
         return respond(200, {"ok": True})
@@ -687,6 +710,7 @@ class App:
                 self.ops[t] = {"busy": None, "error": error}
                 if error:
                     self.awaiting.discard(t)
+                    self.pending.pop(t, None)
 
     def spawn(self, targets, steps):
         """Run (argv, env) steps or callables in a thread for already claimed targets; stop at the first failure."""
@@ -789,6 +813,7 @@ class App:
                     popup_url = target
                 self.awaiting.add(name)
                 self.awaiting_since[name] = self.clock()
+                self.pending.pop(name, None)  # a new login replaces a sign-in that waited for confirmation
             return respond(202, {"ok": True, "login": "gp-saml", "popup_url": popup_url})
         if password is None:
             cli.claim_saml_port(systems, [name])
@@ -813,15 +838,22 @@ class App:
         s = self.require_system(name)
         if s["method"] != "gp-saml":
             raise HttpError(400, {"error": "callback is only for gp-saml systems"})
+        user, usergroup, cookie = self.read_callback(payload)
+        return self.start_saml(name, user, usergroup, cookie)
+
+    @staticmethod
+    def read_callback(payload):
         body = as_object(payload)
         if not isinstance(body.get("url"), str) or not body["url"].strip():
             raise HttpError(400, {"error": "'url' is required"})
         try:
-            user, usergroup, cookie = cli.parse_callback(body.pop("url"))
+            return cli.parse_callback(body.pop("url"))
         except SystemExit as e:  # the CLI's messages hold no part of the URL
             raise HttpError(400, {"error": str(e.code)})
         except Exception:
             raise HttpError(400, {"error": "could not read the callback URL"})
+
+    def start_saml(self, name, user, usergroup, cookie):
         systems = self.regenerate()
         if name not in systems:
             raise HttpError(404, {"error": "unknown system"})
@@ -839,6 +871,7 @@ class App:
         with self.state_lock:
             self.awaiting.discard(name)
             self.awaiting_since.pop(name, None)
+            self.pending.pop(name, None)
         # A SAML cookie is new on every login, so that container must start fresh.
         self.spawn([name], [(compose_argv("up", "-d", "--build", GATEWAY), None),
                             (compose_argv("up", "-d", "--build", "--force-recreate", name), env),
@@ -858,8 +891,55 @@ class App:
         if len(waiting) > 1:
             raise HttpError(409, {"error": "more than one gp-saml login is waiting; "
                                            "paste the link into the right system's card"})
-        self.callback(waiting[0], body)
-        return respond(202, {"ok": True, "system": waiting[0]})
+        name = waiting[0]
+        user, usergroup, cookie = self.read_callback(body)
+        # A forged link would carry someone else's account: when systems.json names the user, the link must match.
+        expected = self.require_system(name).get("user")
+        if isinstance(expected, str) and expected.strip() and expected.casefold() != user.casefold():
+            del cookie
+            raise HttpError(409, {"error": "this sign-in is for another user than the one set for this VPN"})
+        # Nothing starts yet: the page shows the user name and the user confirms it (confirm()). The first sign-in
+        # wins: a later link (perhaps forged) cannot replace the one the user is looking at; Cancel clears it.
+        with self.state_lock:
+            held = self.pending.get(name)
+            if held and now < held[3]:
+                del cookie
+                raise HttpError(409, {"error": "a sign-in already waits for confirmation on the VPN's page"})
+            self.pending[name] = (user, usergroup, cookie, now + AWAIT_TTL)
+        del cookie
+        return respond(202, {"ok": True, "system": name, "confirm": True})
+
+    def confirm(self, name, payload):
+        """The user's answer to a sign-in the helper handed over: {"accept": true, "user": <the name shown>} starts
+        it, {"accept": false} drops it. The name must be the one held, so the user starts only what they saw."""
+        self.require_system(name)
+        body = as_object(payload)
+        if not isinstance(body.get("accept"), bool):
+            raise HttpError(400, {"error": "'accept' must be true or false"})
+        if body["accept"] and not isinstance(body.get("user"), str):
+            raise HttpError(400, {"error": "'user' is required"})
+        with self.state_lock:
+            held = self.pending.get(name)
+            if held is None or self.clock() >= held[3]:
+                self.pending.pop(name, None)
+                raise HttpError(409, {"error": "no sign-in waits for confirmation; sign in again"})
+            if body["accept"] and body["user"] != held[0]:
+                raise HttpError(409, {"error": "the sign-in changed; check the user name and confirm again"})
+            del self.pending[name]
+        user, usergroup, cookie, _ = held
+        del held
+        if not body["accept"]:
+            return respond(200, {"ok": True})
+        return self.start_saml(name, user, usergroup, cookie)
+
+    def pending_user(self, name):
+        """The user name of a sign-in that waits for confirmation, or None."""
+        with self.state_lock:
+            held = self.pending.get(name)
+            if held and self.clock() >= held[3]:
+                del self.pending[name]
+                held = None
+        return held[0] if held else None
 
     # ---- handler file for the callback handler (macOS and Windows) ----
 
@@ -924,6 +1004,7 @@ class App:
         self.regenerate()
         with self.state_lock:
             self.awaiting.discard(name)
+            self.pending.pop(name, None)
             self._drop_pages(name)
         self.launch([name], "stopping", [(compose_argv("rm", "-sf", name), None)])
         return respond(202, {"ok": True})
@@ -958,6 +1039,7 @@ class App:
         self.launch([GATEWAY, *names], "stopping", [(compose_argv("down"), None)])
         with self.state_lock:
             self.awaiting.clear()
+            self.pending.clear()
             self._drop_pages()
         return respond(202, {"ok": True})
 
@@ -1019,6 +1101,9 @@ class App:
                     dns = parse_dns(r[1]) if r and r[0] == 0 else None
             if s["method"] == "gp-saml" and name in awaiting:
                 login = {"kind": "gp-saml", "awaiting_callback": True}
+                confirm_user = self.pending_user(name)
+                if confirm_user is not None:
+                    login["confirm_user"] = confirm_user
             elif s["method"] == "forti-saml" and state == "running" and not up:
                 r = run(["docker", "logs", "--tail", "50", container], merge=True)
                 url = forti_auth_url(r[1], s["host"]) if r else None

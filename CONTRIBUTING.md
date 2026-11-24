@@ -22,6 +22,7 @@ Thank you for helping with VPN Gateway. Issues and pull requests are welcome.
    ```
 
 3. If you changed a Dockerfile or a script under `docker/`, build the images and connect a VPN once.
+   CI runs `npm run check`, checks that `web/app.js` matches a fresh build, Python syntax and `shellcheck`.
 4. Update `docs/technical.md` when the behaviour changes, and add a line to `CHANGELOG.md` under **Unreleased**.
 5. Before you commit, check the diff for real hosts, addresses, names and secrets.
 

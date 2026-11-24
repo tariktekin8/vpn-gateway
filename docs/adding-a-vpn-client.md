@@ -35,6 +35,8 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       capability, say why in the pull request.
 - [ ] `hub-link.sh` keeps writing `/state/<name>.routes` every 5 seconds. The gateway treats a container whose file
       is older than 15 seconds as stopped and never looks its name up.
+- [ ] A sign-in that arrives without the user's action on the page (a helper, a redirect to a local port) never
+      starts a tunnel by itself: it is held in memory, shown to the user, and expires after 5 minutes.
 - [ ] If the client needs a callback port (like FortiGate SAML on 8020), it goes through the gateway and is
       published on `127.0.0.1` only. The computer picks which VPN gets it (`cli.claim_saml_port` writes
       `data/wireguard/saml-target`), never a VPN container; the container only says that its login waits
