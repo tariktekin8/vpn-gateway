@@ -35,12 +35,23 @@ iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A FORWARD -i wg0 -o eth+ -j ALLOWED
 iptables -A FORWARD -j DROP  # also every VPN container towards another one
 # VPN containers may not open connections to the gateway itself (for example the SAML port 8020); only the
-# default network (published ports), WireGuard and replies may.
+# default network (published ports), the tunnel, the two published ports from Docker's bridges and replies may.
 DEFAULT_IF=$(ip -4 route show default | awk '{print $5; exit}')
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -i wg0 -j ACCEPT
 iptables -A INPUT -i "${DEFAULT_IF:?no default route}" -j ACCEPT
+# Docker Desktop may deliver a published port on any of the networks, whatever gw_priority says. Such packets come
+# from that network's bridge, its first address. A VPN container could forge that address: WireGuard answers only to
+# the Mac's key, and saml-forward.sh passes nothing on except while a FortiGate login waits.
+ip -4 -o addr show | awk '$2 ~ /^eth/ {
+    split($4, c, "/"); split(c[1], p, "."); s = 2 ^ (32 - c[2])
+    n = int((((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4]) / s) * s + 1
+    printf "%s %d.%d.%d.%d\n", $2, int(n / 16777216), int(n / 65536) % 256, int(n / 256) % 256, n % 256 }' |
+  while read -r dev bridge; do
+    iptables -A INPUT -i "$dev" -s "$bridge" -p udp --dport 51820 -j ACCEPT
+    iptables -A INPUT -i "$dev" -s "$bridge" -p tcp --dport 8020 -j ACCEPT
+  done
 iptables -A INPUT -j DROP
 
 # FortiGate SAML logins end on http://127.0.0.1:8020/ in the Mac browser. One port serves every forti-saml system:

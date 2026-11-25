@@ -11,14 +11,18 @@ text as here.
 
 Nothing yet.
 
-## 2.0.0 (2026-11-24)
+## 2.0.0 (2026-11-26)
+
+This release replaces the first 2.0.0 of 2026-11-24, with which the computer could often not reach the gateway. If
+you have that one, see "Upgrading from the first 2.0.0".
 
 ### Security
 
 - **Each VPN is kept apart.** Each VPN container has its own Docker network (`net-<name>`) and its own state volume
   (`state-<name>`). Only the gateway joins every network. A VPN container cannot reach another one, send packets
-  into another organization's network, open connections to the gateway, claim another VPN's subnets or take over
-  another VPN's FortiGate SAML callback. A subnet is routed only to the VPN that lists it in `systems.json`.
+  into another organization's network, open connections to the gateway from its own address, claim another VPN's
+  subnets or take over another VPN's FortiGate SAML callback. A subnet is routed only to the VPN that lists it in
+  `systems.json`.
 - **Passwords are never stored.** `gp-password` asks for the password at every connect, on the page or with
   `./vpn login`. Passwords, SAML cookies and MFA codes go into the VPN container through a pipe in memory
   (`/run/vpn/in` on a tmpfs). They never reach a file, the compose file, an argument list, the environment or a
@@ -93,6 +97,11 @@ Nothing yet.
   version, the terminal and the page say so, with a link to what changed. Nothing is updated by itself: you run
   `git pull`. `VPN_GATEWAY_NO_UPDATE_CHECK=1` turns the check off.
 
+### Changed
+
+- **A VPN container is deleted when its connection ends,** not only on **Disconnect**. The page says
+  **Connection ended** and its **Logs** tab still shows the last lines, which `./vpn web` keeps in memory only.
+
 ### Fixed
 
 - FortiGate SAML: after the sign-in the browser waited about a minute, unless you clicked the "Authenticate at"
@@ -110,6 +119,20 @@ Nothing yet.
   that refuses another user's sign-in.
 - Mac: with the automatic tunnel installed, the page no longer offers the WireGuard profile download. Importing it
   into the WireGuard app starts a second client with the same key, and the two break each other.
+- **The computer could not reach the gateway after a start, or a FortiGate sign-in got stuck.** Docker Desktop
+  sometimes delivers the published ports on a VPN's network instead of the default one, and the gateway's firewall
+  dropped those packets. It now accepts UDP 51820 and TCP 8020 from each network's bridge address.
+- **"Connected" stayed on after the tunnel was lost.** The page and `./vpn status` counted any earlier handshake.
+  The last one must now be at most 180 seconds old.
+- **The address dots were green without a connection.** The **Local** stop is amber while this computer is not
+  connected to the gateway.
+- **The page told users of the automatic tunnel to import the profile in WireGuard,** which starts a second tunnel
+  that breaks the first one.
+
+### Upgrading from the first 2.0.0
+
+- Run `git pull`, stop `./vpn web` with Ctrl-C, start it again, and press **Stop gateway**, then **Start gateway**.
+  Your VPN connections stay up. Run `git fetch --tags --force` if you use the `v2.0.0` tag: it moved.
 
 ### Upgrading from 1.0.0
 

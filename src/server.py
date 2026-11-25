@@ -39,6 +39,8 @@ DEFAULT_PORT = 8765
 MAX_BODY = 64 * 1024
 MAX_INPUT = 1024
 STATUS_TIMEOUT = 5  # seconds; status, inspect and logs calls
+MAX_LOG_LINES = 500
+SWEEP_EVERY = 10  # seconds between looks for VPN containers that stopped by themselves
 RM_TIMEOUT = 120  # stopping one container before a delete
 LONG_TIMEOUT = 1800  # compose up --build can take minutes
 TOKEN_HEADER = "x-gateway-token"
@@ -387,6 +389,10 @@ class App:
         self.wall = time.time  # the page token's idle time counts while the computer sleeps, unlike clock()
         self.token_used = self.wall()
         self.threads = []
+        self.ended = {}  # name -> last log lines of a connection that ended by itself; memory only
+        self.sweep_lock = threading.Lock()  # held while one stopped container is removed
+        self.sweep_wake = threading.Event()  # set when there may be a VPN container to watch
+        self.sweep_wake.set()
         self.new_release = None  # set by check_update when a newer release exists
         self.set_port(port)
 
@@ -704,6 +710,7 @@ class App:
                 raise HttpError(409, {"error": "an operation is already running for this target"})
             for t in targets:
                 self.ops[t] = {"busy": label, "error": None}
+                self.ended.pop(t, None)
 
     def release(self, targets, error):
         with self.state_lock:
@@ -727,6 +734,8 @@ class App:
     def _run_steps(self, targets, steps):
         error = None
         try:
+            with self.sweep_lock:  # the target is claimed, so after this no sweep touches its container
+                pass
             for step in steps:
                 if callable(step):  # sends a login; its message never holds the login itself
                     step()
@@ -746,6 +755,46 @@ class App:
             error = f"internal error: {type(e).__name__}"
         finally:
             self.release(targets, error)
+            self.sweep_wake.set()
+
+    # ---- containers of connections that ended ----
+
+    def sweep(self):
+        """Delete VPN containers that stopped by themselves and keep their last log lines in memory.
+        Returns whether any VPN container is left to watch."""
+        rc, out, _ = self.docker.run(cli.vpn_containers_argv(), timeout=STATUS_TIMEOUT)
+        if rc:
+            return True  # Docker is off or starting: look again later
+        found = cli.vpn_containers(out)
+        for cid, state, name in found:
+            if state not in cli.STOPPED:
+                continue
+            with self.sweep_lock:
+                with self.state_lock:
+                    if self.ops.get(name, {}).get("busy"):
+                        continue
+                rc, out, _ = self.docker.run(["docker", "logs", "--tail", str(MAX_LOG_LINES), cid],
+                                             timeout=STATUS_TIMEOUT, merge_stderr=True)
+                lines = out.splitlines() if rc == 0 else []
+                # By ID and without -f: never a newer container, never a running one.
+                rc, _, _ = self.docker.run(["docker", "rm", cid], timeout=RM_TIMEOUT)
+                if rc == 0:
+                    with self.state_lock:
+                        if not self.ops.get(name, {}).get("busy"):
+                            self.ended[name] = lines
+        return bool(found)
+
+    def sweep_forever(self):
+        # Without VPN containers it asks Docker nothing, so Docker Desktop can rest.
+        while True:
+            self.sweep_wake.wait()
+            self.sweep_wake.clear()
+            try:
+                if self.sweep():
+                    self.sweep_wake.set()
+            except (OSError, subprocess.TimeoutExpired):
+                self.sweep_wake.set()  # Docker is not there or is slow: try again
+            time.sleep(SWEEP_EVERY)
 
     def join(self, timeout=5):
         """Wait for background operations (used by tests)."""
@@ -1075,10 +1124,8 @@ class App:
         gw_state = inspect(gw_container)
         mac = False
         if gw_state == "running":
-            r = run(["docker", "exec", gw_container, "wg", "show", "wg0", "latest-handshakes"])
-            if r and r[0] == 0:
-                seen = r[1].split()[-1:] or ["0"]
-                mac = seen[0] != "0"
+            r = run(cli.handshake_argv(gw_container))
+            mac = bool(r) and r[0] == 0 and cli.handshake_fresh(r[1])
         gw_op = ops.get(GATEWAY, {})
         profile = read_profile()
         out = {"gateway": {"state": gw_state, "running": gw_state == "running", "mac_connected": mac,
@@ -1117,9 +1164,12 @@ class App:
             elif s["method"] == "gp-password" and state == "running" and not up:
                 login = {"kind": "gp-password", "awaiting_input": True}
             op = ops.get(name, {})
+            with self.state_lock:
+                ended = name in self.ended and state != "running"
             out["systems"][name] = {"method": s["method"], "state": state, "iface": iface, "tunnel_up": up,
                                     "routes": routes, "busy": op.get("busy"), "error": op.get("error"),
-                                    "login": login, "dns": dns}
+                                    "login": login, "dns": dns, "ended": ended}
+        self.sweep_wake.set()  # a VPN started in a terminal counts too
         out = {"docker": docker_ok[0], **out, "update": self.new_release}
         return respond(200, out)
 
@@ -1131,7 +1181,7 @@ class App:
         values = urllib.parse.parse_qs(query, keep_blank_values=True).get("tail", ["100"])
         if len(values) != 1 or not re.fullmatch(r"-?\d{1,9}", values[0]):
             raise HttpError(400, {"error": "tail must be one integer"})
-        tail = min(max(int(values[0]), 1), 500)
+        tail = min(max(int(values[0]), 1), MAX_LOG_LINES)
         try:
             rc, out, _ = self.docker.run(["docker", "logs", "--tail", str(tail), container_of(name)],
                                          timeout=STATUS_TIMEOUT, merge_stderr=True)
@@ -1140,6 +1190,10 @@ class App:
         except subprocess.TimeoutExpired:
             raise HttpError(504, {"error": "docker did not answer in time"})
         if rc:
+            with self.state_lock:
+                kept = self.ended.get(name)
+            if kept is not None:  # the container is deleted; why it ended is still here
+                return respond(200, {"lines": kept[-tail:]})
             raise HttpError(502, {"error": short_error(out, f"docker logs exited with code {rc}")})
         return respond(200, {"lines": out.splitlines()})
 
@@ -1233,6 +1287,7 @@ def main(argv):
         print(f"VPN Gateway web app (this link is the key; a new one at every start; Ctrl-C stops it):\n{link}",
               flush=True)
         webbrowser.open(link)
+        threading.Thread(target=app.sweep_forever, daemon=True).start()
         if not os.environ.get(NO_UPDATE_CHECK):
             threading.Thread(target=app.check_update, daemon=True).start()
         server.serve_forever()

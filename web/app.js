@@ -294,13 +294,18 @@ function selectTab(tabs, name, quiet = false) {
 }
 // ---------- the path of one address (local → gateway → VPN) ----------
 // Three stops on one line. A stop that does not use the address turns amber and the line breaks there.
+// The route may point into the tunnel while the tunnel itself reaches no gateway.
+function tunnelDown() {
+    return lastStatus?.gateway?.mac_connected === false;
+}
 function pathStops(e, sys) {
     const off = !sys.running;
-    const mac = e.mac === null ? "off" : e.mac === "tunnel" ? "ok" : "warn";
+    const mac = e.mac === null ? "off" : e.mac === "tunnel" && !tunnelDown() ? "ok" : "warn";
     const gw = e.gateway === "this" ? "ok" : e.gateway === "blocked" || off ? "off" : "warn";
     const vpn = e.vpn === "yes" ? "ok" : e.vpn === "off" ? "off" : "warn";
     return [
-        { label: "Local", tone: mac, text: e.mac === null ? "not checked" : e.mac === "tunnel" ? "into the tunnel"
+        { label: "Local", tone: mac, text: e.mac === null ? "not checked" : e.mac === "tunnel"
+                ? (tunnelDown() ? "into the tunnel, which is not connected" : "into the tunnel")
                 : "outside the tunnel" + (e.mac_interface ? " (" + e.mac_interface + ")" : "") },
         { label: "Gateway", tone: gw, text: e.gateway === "this" ? "to this VPN" : e.gateway === "blocked"
                 ? "held: VPN off" : e.gateway === "other" ? "to another VPN" : "no route yet" },
@@ -742,6 +747,7 @@ function renderGateway() {
         return;
     }
     const running = st.running === true;
+    const ps = profileState();
     setTone(gw.dot, "dot", st.busy ? "busy" : st.error ? "bad" : !running ? "off" : st.mac_connected ? "ok" : "warn");
     setText(gw.state, st.busy ? (st.busy === "stopping" ? "Gateway stopping…" : "Gateway starting…")
         : st.error ? "Gateway error: " + st.error : !running ? "Gateway off"
@@ -750,8 +756,9 @@ function renderGateway() {
     setText(gw.power, gw.power.dataset.action === "stop" ? "Stop gateway" : "Start gateway");
     gw.power.className = "btn" + (gw.power.dataset.action === "start" ? " btn-primary" : "");
     setText(gw.facts["Local"], !running ? "Not connected: the gateway is off"
-        : st.mac_connected ? "Connected through WireGuard" : "Not connected yet: import the profile in WireGuard");
-    const ps = profileState();
+        : st.mac_connected ? "Connected through WireGuard"
+            : ps === "auto" ? "Not connected: the automatic tunnel connects by itself"
+                : "Not connected: import the profile in WireGuard");
     setText(gw.facts["WireGuard profile"], ps === "none" ? "Created when the gateway starts for the first time"
         : ps === "auto" ? "Applied by the automatic tunnel service; no download needed"
             : ps === "changed" ? "Changed since your last download: download and import it again"
@@ -934,7 +941,7 @@ function renderCard(card) {
     else if (st.state === "running")
         [tone, text] = ["warn", "Connecting…"];
     else
-        [tone, text] = ["off", "Not connected"];
+        [tone, text] = ["off", st.ended ? "Connection ended · see Logs" : "Not connected"];
     setTone(card.dot, "dot", tone);
     setTone(card.itemDot, "dot", tone);
     setText(card.state, text);
@@ -994,7 +1001,7 @@ function renderCard(card) {
 function renderAddresses(card, sys) {
     const rs = routes[card.name];
     const entries = sys?.subnets ?? [];
-    const key = JSON.stringify([entries, rs?.entries ?? null, rs?.running ?? null, macChecked]);
+    const key = JSON.stringify([entries, rs?.entries ?? null, rs?.running ?? null, macChecked, tunnelDown()]);
     if (card.addrBody.dataset.key === key)
         return;
     card.addrBody.dataset.key = key;
@@ -1041,7 +1048,8 @@ function renderAddresses(card, sys) {
     }
     table.append(thead, tbody);
     wrap.append(table);
-    const legend = h("p", "muted small", macChecked ? "Each address passes local, the gateway and the VPN. Green " +
+    const legend = h("p", "muted small", macChecked && tunnelDown() ? "This computer is not connected to the gateway, " +
+        "so no address works." : macChecked ? "Each address passes local, the gateway and the VPN. Green " +
         "all the way means it works; an amber stop shows what is wrong below the address." : "Each address passes the gateway and the VPN. " +
         "Local is not checked when the page runs on another computer.");
     card.addrBody.append(wrap, legend);

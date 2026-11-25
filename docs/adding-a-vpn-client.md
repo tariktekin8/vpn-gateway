@@ -69,6 +69,8 @@ A VPN container runs one VPN client and shares its tunnel with the gateway:
       masked line shapes. If the client prints a secret that is not `...cookie=value`, extend `hide-cookies.sh` and
       test it with synthetic input in the built image.
 - [ ] Check that prompts without a line end (`Password:`, an MFA code) still show at once in the log.
+- [ ] The client is PID 1 and ends when its tunnel is lost for good, so the container stops and `./vpn web` deletes
+      it. Keep `restart: "no"`, and keep nothing in the container that a later connect needs.
 - [ ] Do not run the client in a verbose or debug mode by default. Verbose output often prints cookies or headers.
 
 ### DNS

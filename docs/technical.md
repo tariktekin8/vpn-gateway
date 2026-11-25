@@ -964,12 +964,21 @@ waits about 30 seconds and then fails.
   connections that VPN containers open to it. So a VPN container, even one taken over through a bug in its VPN
   client, cannot reach another VPN container, send packets into another organization's network, claim another
   VPN's subnets or take over another VPN's FortiGate SAML callback.
+- Docker Desktop may deliver the published ports on any of the gateway's networks. So the gateway accepts UDP 51820
+  and TCP 8020 from each network's bridge address, and nothing else there. A VPN container that forges that address
+  can reach these two ports. WireGuard answers only packets made with your computer's key, which no VPN container
+  has. Port 8020 passes a connection on only for 5 minutes after **Connect**, while that FortiGate login waits.
 - A VPN container counts as alive only while it writes its state file (every 5 seconds). The gateway routes to it,
   looks its name up and passes it the FortiGate callback only then, and only to an address on the gateway's own
   Docker networks. A stopped container's old files are ignored, and its name never goes to the local network's DNS.
 - VPN containers run with only the capabilities a VPN client needs (`NET_ADMIN`, `NET_RAW`) and with
   `no-new-privileges`. Their firewall drops connections from the VPN side to the container itself, for IPv4 and
   IPv6.
+- A VPN container whose connection ended (dropped, idle, failed sign-in, computer restart) is deleted: by
+  `./vpn web` within about 10 seconds, and by the next `./vpn up` or `./vpn login`. Its Docker log, settings and
+  files go with it. `./vpn web` keeps its last 500 log lines in memory, so the **Logs** tab still shows why it ended,
+  until the next **Connect**, **Disconnect** or Ctrl-C. The gateway is not deleted, and the state volume
+  (`state-<name>`: routes and DNS names) stays. While `./vpn web` is stopped, a stopped container stays until then.
 - The gateway runs with `NET_ADMIN`, `NET_RAW`, `NET_BIND_SERVICE`, `SETUID` and `SETGID` only (dnsmasq binds port
   53 and then runs as `nobody`), with `no-new-privileges`, and without any DNS server behind it. It reads what this
   computer writes (routes, owners, port limits, the SAML target) from `data/gateway/`, mounted read-only, and writes

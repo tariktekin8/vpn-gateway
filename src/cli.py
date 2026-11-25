@@ -535,11 +535,48 @@ def compose(*args, env=None):
     return subprocess.call(["docker", "compose", "-f", str(COMPOSE), *args], env=env)
 
 
+def vpn_containers_argv():
+    """Lists the project's containers; the label keeps other projects' containers out."""
+    return ["docker", "ps", "-a", "--no-trunc", "--filter", f"label=com.docker.compose.project={PROJECT}",
+            "--format", '{{.ID}} {{.State}} {{.Label "com.docker.compose.service"}}']
+
+
+def vpn_containers(out):
+    """[(id, state, name)] of the VPN containers in that list. Never the gateway: it starts again with Docker."""
+    rows = [line.split() for line in out.splitlines()]
+    return [tuple(r) for r in rows if len(r) == 3 and r[2] != GATEWAY]
+
+
+STOPPED = ("exited", "dead")  # not "created": that one is about to start
+
+
+def remove_stopped():
+    """Delete VPN containers whose connection ended: their logs and settings do not stay behind."""
+    r = subprocess.run(vpn_containers_argv(), capture_output=True, text=True)
+    for cid, state, _ in vpn_containers(r.stdout if r.returncode == 0 else ""):
+        if state in STOPPED:
+            subprocess.run(["docker", "rm", cid], capture_output=True)  # no -f: it never removes a running one
+
+
 def pick(systems, names):
     unknown = [n for n in names if n not in systems]
     if unknown:
         sys.exit(f"unknown system(s): {unknown}; defined: {sorted(systems)}")
     return list(names)
+
+
+def handshake_argv(container):
+    """The gateway's own clock, then its WireGuard handshakes: the computer's clock may differ after sleep."""
+    return ["docker", "exec", container, "sh", "-c", "date +%s; wg show wg0 latest-handshakes"]
+
+
+def handshake_fresh(out):
+    """True if the last handshake is at most 180 s old. WireGuard makes a new one about every 2 minutes (the profile
+    sends keepalives) and stops using a session after 180 s."""
+    words = out.split()
+    if len(words) < 3 or not (words[0].isdigit() and words[-1].isdigit()) or words[-1] == "0":
+        return False
+    return int(words[0]) - int(words[-1]) <= 180
 
 
 def with_gateway(names):
@@ -561,6 +598,8 @@ def main(argv):
         sys.exit("Containers from the old name (vpnhub-*) still run and hold the ports. Remove them once with:\n"
                  "  docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=vpnhub)\n"
                  "Your VPN sessions end; log in again afterwards.")
+    if cmd in ("up", "login"):
+        remove_stopped()
     if cmd == "up":
         names = pick(systems, args)
         claim_saml_port(systems, names)
@@ -648,13 +687,11 @@ def main(argv):
         print("Sent.")
         return 0
     if cmd == "status":
-        gw = subprocess.run(["docker", "exec", f"vpn-{GATEWAY}", "wg", "show", "wg0", "latest-handshakes"],
-                            capture_output=True, text=True)
+        gw = subprocess.run(handshake_argv(f"vpn-{GATEWAY}"), capture_output=True, text=True)
         if gw.returncode:
             print(f"{GATEWAY:<12} {'wireguard':<12} not running")
         else:
-            seen = gw.stdout.split()[-1:] or ["0"]
-            mac = "Mac connected" if seen[0] != "0" else "Mac not connected yet"
+            mac = "Mac connected" if handshake_fresh(gw.stdout) else "Mac not connected"
             print(f"{GATEWAY:<12} {'wireguard':<12} running      {mac}")
         for name, s in systems.items():
             container = f"vpn-{name}"
